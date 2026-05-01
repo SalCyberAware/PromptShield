@@ -1,14 +1,20 @@
 """PromptShield command-line interface."""
+import asyncio
 import sys
+import uuid
+from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 
 from . import __version__
 from .attacks.library import AttackLibrary
-from .models import AttackCategory, Severity
+from .engines.api_scanner import APIScanner
+from .models import AttackCategory, AuthType, Severity, TargetConfig, TargetType
+from .reporters.json_reporter import JSONReporter
 
 console = Console()
 
@@ -65,22 +71,37 @@ def main(ctx: click.Context, version: bool) -> None:
     "target_type",
     type=click.Choice(["api", "web"]),
     default="api",
-    help="Target type: api or web.",
+    help="Target type: api or web (web coming Phase 2).",
 )
-@click.option("--auth-type", default="none", help="Authentication type.")
-@click.option("--api-key", default=None, help="API key for authentication.")
+@click.option(
+    "--auth-type",
+    type=click.Choice(["none", "bearer", "api_key"]),
+    default="none",
+    help="Authentication type.",
+)
+@click.option("--api-key", default=None, help="API key/bearer token for authentication.")
 @click.option("--categories", default=None, help="Comma-separated OWASP categories (e.g., LLM01,LLM06).")
-@click.option("--output", "-o", default=None, help="Output file for the report (JSON).")
+@click.option("--rate-limit", default=10, help="Max requests per minute.")
+@click.option("--timeout", default=30, help="Request timeout in seconds.")
+@click.option("--output", "-o", default=None, help="Output JSON file path.")
+@click.option("--dry-run", is_flag=True, help="Show what would be scanned without sending requests.")
 def scan(
     target: str,
     target_type: str,
     auth_type: str,
     api_key: str | None,
     categories: str | None,
+    rate_limit: int,
+    timeout: int,
     output: str | None,
+    dry_run: bool,
 ) -> None:
     """Run a vulnerability scan against an LLM target."""
     print_banner()
+
+    if target_type == "web":
+        console.print("[red]Web scanning is coming in Phase 2. Use --type api for now.[/red]")
+        sys.exit(1)
 
     library = AttackLibrary()
     selected_attacks = library.all()
@@ -89,17 +110,126 @@ def scan(
         category_codes = [c.strip().upper() for c in categories.split(",")]
         selected_attacks = [a for a in selected_attacks if a.owasp_category in category_codes]
 
+    if not selected_attacks:
+        console.print("[red]No attacks matched your filters.[/red]")
+        sys.exit(1)
+
     panel_text = (
         f"[bold]Target:[/bold] {target}\n"
         f"[bold]Type:[/bold] {target_type}\n"
         f"[bold]Auth:[/bold] {auth_type}\n"
+        f"[bold]Rate limit:[/bold] {rate_limit} req/min\n"
         f"[bold]Categories:[/bold] {categories or 'all'}\n"
         f"[bold]Attacks loaded:[/bold] {len(selected_attacks)}"
     )
     console.print(Panel(panel_text, title="Scan Configuration", border_style="cyan"))
 
-    console.print("\n[yellow]Scanner engine implementation coming next.[/yellow]")
-    console.print("[dim]Use 'promptshield library list' to see all loaded attacks.[/dim]\n")
+    if dry_run:
+        console.print("\n[yellow]DRY RUN — no requests will be sent.[/yellow]")
+        table = Table(title="Attacks that would be sent", border_style="cyan")
+        table.add_column("ID", style="cyan")
+        table.add_column("OWASP")
+        table.add_column("Name")
+        table.add_column("Severity")
+        for attack in selected_attacks[:25]:
+            sev_color = SEVERITY_COLOR.get(attack.severity.value, "white")
+            table.add_row(
+                attack.id,
+                attack.owasp_category,
+                attack.name,
+                f"[{sev_color}]{attack.severity.value}[/{sev_color}]",
+            )
+        console.print(table)
+        if len(selected_attacks) > 25:
+            console.print(f"[dim]...and {len(selected_attacks) - 25} more.[/dim]")
+        return
+
+    target_config = TargetConfig(
+        url=target,
+        target_type=TargetType.API,
+        auth_type=AuthType(auth_type),
+        auth_value=api_key,
+        timeout=timeout,
+        rate_limit=rate_limit,
+    )
+
+    scanner = APIScanner(target_config, selected_attacks)
+    scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
+
+    console.print(f"\n[cyan]Starting scan {scan_id}...[/cyan]\n")
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    )
+
+    with progress:
+        task = progress.add_task("[cyan]Scanning...", total=len(selected_attacks))
+
+        def update_progress(current: int, total: int, attack):
+            progress.update(task, completed=current, description=f"[cyan]{attack.id} - {attack.name[:40]}")
+
+        scan_result = asyncio.run(
+            scanner.run_scan(
+                scan_id=scan_id,
+                library_version="1.0.0",
+                on_progress=update_progress,
+            )
+        )
+
+    console.print(f"\n[green]Scan complete![/green]")
+    print_summary(scan_result)
+
+    if output:
+        output_path = Path(output)
+        reporter = JSONReporter()
+        saved = reporter.generate(scan_result, output_path)
+        console.print(f"\n[green]Report saved to:[/green] {saved}")
+
+
+def print_summary(scan_result) -> None:
+    """Print a summary table of scan results."""
+    summary_table = Table(title="Scan Summary", border_style="cyan")
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="white")
+
+    summary_table.add_row("Scan ID", scan_result.scan_id)
+    summary_table.add_row("Status", scan_result.status.value)
+    summary_table.add_row("Target", scan_result.target.url)
+    summary_table.add_row("Attacks run", f"{scan_result.attacks_run}/{scan_result.attacks_total}")
+    summary_table.add_row("Findings", str(len(scan_result.findings)))
+
+    if scan_result.started_at and scan_result.completed_at:
+        duration = (scan_result.completed_at - scan_result.started_at).total_seconds()
+        summary_table.add_row("Duration", f"{duration:.1f}s")
+
+    console.print(summary_table)
+
+    if scan_result.findings:
+        console.print()
+        findings_table = Table(title=f"Findings ({len(scan_result.findings)})", border_style="red")
+        findings_table.add_column("Finding", style="cyan", no_wrap=True)
+        findings_table.add_column("Severity")
+        findings_table.add_column("OWASP")
+        findings_table.add_column("Title")
+        findings_table.add_column("Confidence")
+
+        for finding in scan_result.findings:
+            sev_color = SEVERITY_COLOR.get(finding.severity.value, "white")
+            findings_table.add_row(
+                finding.finding_id,
+                f"[{sev_color}]{finding.severity.value}[/{sev_color}]",
+                finding.evidence.get("owasp_category", "-"),
+                finding.title[:50],
+                f"{finding.confidence_score*100:.0f}%",
+            )
+
+        console.print(findings_table)
+    else:
+        console.print("\n[green]✓ No findings detected.[/green]")
 
 
 @main.group()
@@ -109,7 +239,7 @@ def library() -> None:
 
 @library.command("list")
 @click.option("--category", default=None, help="Filter by OWASP category (e.g., LLM01).")
-@click.option("--severity", default=None, help="Filter by severity (low, medium, high, critical).")
+@click.option("--severity", default=None, help="Filter by severity.")
 @click.option("--tag", default=None, help="Filter by tag.")
 def library_list(category: str | None, severity: str | None, tag: str | None) -> None:
     """List available attacks in the library."""
