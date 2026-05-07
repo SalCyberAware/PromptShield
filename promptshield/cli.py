@@ -1,10 +1,12 @@
 """PromptShield command-line interface."""
 import asyncio
+import os
 import sys
 import uuid
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -12,15 +14,17 @@ from rich.table import Table
 
 from . import __version__
 from .attacks.library import AttackLibrary
-from .engines.api_scanner import APIScanner
+from .engines.api_scanner import APIScanner, APIProvider, detect_provider
 from .models import AttackCategory, AuthType, Severity, TargetConfig, TargetType
 from .reporters.json_reporter import JSONReporter
+
+# Load .env from current working directory if present
+load_dotenv()
 
 console = Console()
 
 
 def print_banner() -> None:
-    """Print the PromptShield banner."""
     banner = """
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
@@ -51,6 +55,25 @@ SEVERITY_COLOR = {
 }
 
 
+def resolve_api_key(target_url: str, explicit_key: str | None) -> str | None:
+    """Resolve the API key from CLI flag, env var, or .env file. Never logs the key."""
+    if explicit_key:
+        return explicit_key
+
+    provider = detect_provider(target_url)
+
+    if provider == APIProvider.ANTHROPIC:
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if key:
+            return key
+    if provider == APIProvider.OPENAI:
+        key = os.getenv("OPENAI_API_KEY")
+        if key:
+            return key
+
+    return os.getenv("PROMPTSHIELD_API_KEY")
+
+
 @click.group(invoke_without_command=True)
 @click.option("--version", is_flag=True, help="Show version and exit.")
 @click.pass_context
@@ -71,20 +94,25 @@ def main(ctx: click.Context, version: bool) -> None:
     "target_type",
     type=click.Choice(["api", "web"]),
     default="api",
-    help="Target type: api or web (web coming Phase 2).",
 )
 @click.option(
     "--auth-type",
     type=click.Choice(["none", "bearer", "api_key"]),
-    default="none",
-    help="Authentication type.",
+    default="api_key",
+    help="Authentication type. Default: api_key.",
 )
-@click.option("--api-key", default=None, help="API key/bearer token for authentication.")
+@click.option(
+    "--api-key",
+    default=None,
+    help="API key. PREFER setting ANTHROPIC_API_KEY or OPENAI_API_KEY in .env instead.",
+)
 @click.option("--categories", default=None, help="Comma-separated OWASP categories (e.g., LLM01,LLM06).")
 @click.option("--rate-limit", default=10, help="Max requests per minute.")
 @click.option("--timeout", default=30, help="Request timeout in seconds.")
 @click.option("--output", "-o", default=None, help="Output JSON file path.")
 @click.option("--dry-run", is_flag=True, help="Show what would be scanned without sending requests.")
+@click.option("--verbose", "-v", is_flag=True, help="Print full request/response transcripts.")
+@click.option("--no-transcripts", is_flag=True, help="Do not save transcripts in the output JSON.")
 def scan(
     target: str,
     target_type: str,
@@ -95,6 +123,8 @@ def scan(
     timeout: int,
     output: str | None,
     dry_run: bool,
+    verbose: bool,
+    no_transcripts: bool,
 ) -> None:
     """Run a vulnerability scan against an LLM target."""
     print_banner()
@@ -114,13 +144,34 @@ def scan(
         console.print("[red]No attacks matched your filters.[/red]")
         sys.exit(1)
 
+    if not dry_run and auth_type != "none":
+        resolved_key = resolve_api_key(target, api_key)
+        if not resolved_key:
+            console.print(
+                "[red]No API key found.[/red] Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env, "
+                "or pass --api-key (less secure)."
+            )
+            sys.exit(1)
+        api_key_present = True
+        if api_key:
+            key_source = "command line (less secure - use .env instead)"
+        else:
+            key_source = "environment / .env file"
+    else:
+        resolved_key = None
+        api_key_present = False
+        key_source = "none"
+
     panel_text = (
         f"[bold]Target:[/bold] {target}\n"
         f"[bold]Type:[/bold] {target_type}\n"
         f"[bold]Auth:[/bold] {auth_type}\n"
+        f"[bold]Key source:[/bold] {key_source}\n"
         f"[bold]Rate limit:[/bold] {rate_limit} req/min\n"
         f"[bold]Categories:[/bold] {categories or 'all'}\n"
-        f"[bold]Attacks loaded:[/bold] {len(selected_attacks)}"
+        f"[bold]Attacks loaded:[/bold] {len(selected_attacks)}\n"
+        f"[bold]Save transcripts:[/bold] {'no' if no_transcripts else 'yes'}\n"
+        f"[bold]Verbose:[/bold] {'yes' if verbose else 'no'}"
     )
     console.print(Panel(panel_text, title="Scan Configuration", border_style="cyan"))
 
@@ -148,7 +199,7 @@ def scan(
         url=target,
         target_type=TargetType.API,
         auth_type=AuthType(auth_type),
-        auth_value=api_key,
+        auth_value=resolved_key,
         timeout=timeout,
         rate_limit=rate_limit,
     )
@@ -177,11 +228,15 @@ def scan(
                 scan_id=scan_id,
                 library_version="1.0.0",
                 on_progress=update_progress,
+                save_transcripts=not no_transcripts,
             )
         )
 
     console.print(f"\n[green]Scan complete![/green]")
     print_summary(scan_result)
+
+    if verbose and scan_result.transcripts:
+        print_transcripts(scan_result)
 
     if output:
         output_path = Path(output)
@@ -191,7 +246,6 @@ def scan(
 
 
 def print_summary(scan_result) -> None:
-    """Print a summary table of scan results."""
     summary_table = Table(title="Scan Summary", border_style="cyan")
     summary_table.add_column("Metric", style="cyan")
     summary_table.add_column("Value", style="white")
@@ -201,6 +255,7 @@ def print_summary(scan_result) -> None:
     summary_table.add_row("Target", scan_result.target.url)
     summary_table.add_row("Attacks run", f"{scan_result.attacks_run}/{scan_result.attacks_total}")
     summary_table.add_row("Findings", str(len(scan_result.findings)))
+    summary_table.add_row("Transcripts saved", str(len(scan_result.transcripts)))
 
     if scan_result.started_at and scan_result.completed_at:
         duration = (scan_result.completed_at - scan_result.started_at).total_seconds()
@@ -229,7 +284,26 @@ def print_summary(scan_result) -> None:
 
         console.print(findings_table)
     else:
-        console.print("\n[green]✓ No findings detected.[/green]")
+        console.print("\n[green]No findings detected.[/green] [dim](use --verbose to see what the model said)[/dim]")
+
+
+def print_transcripts(scan_result) -> None:
+    """Print full request/response transcripts for inspection."""
+    console.print("\n[bold cyan]=== Transcripts ===[/bold cyan]\n")
+    for transcript in scan_result.transcripts:
+        sev_color = SEVERITY_COLOR.get(transcript.severity.value, "white")
+        marker = "[red]FINDING[/red]" if transcript.became_finding else "[green]CLEAN[/green]"
+        header = (
+            f"[bold]{transcript.attack_id}[/bold] · {transcript.owasp_category} · "
+            f"[{sev_color}]{transcript.severity.value}[/{sev_color}] · {marker} · "
+            f"{transcript.duration_seconds}s"
+        )
+        console.print(header)
+        console.print(f"[bold]Attack:[/bold] {transcript.attack_name}")
+        console.print(Panel(transcript.prompt, title="prompt sent", border_style="dim", style="yellow"))
+        truncated_note = " [dim](truncated)[/dim]" if transcript.response_truncated else ""
+        console.print(Panel(transcript.response, title=f"response received{truncated_note}", border_style="dim"))
+        console.print()
 
 
 @main.group()
@@ -238,9 +312,9 @@ def library() -> None:
 
 
 @library.command("list")
-@click.option("--category", default=None, help="Filter by OWASP category (e.g., LLM01).")
-@click.option("--severity", default=None, help="Filter by severity.")
-@click.option("--tag", default=None, help="Filter by tag.")
+@click.option("--category", default=None)
+@click.option("--severity", default=None)
+@click.option("--tag", default=None)
 def library_list(category: str | None, severity: str | None, tag: str | None) -> None:
     """List available attacks in the library."""
     lib = AttackLibrary()
@@ -306,7 +380,7 @@ def library_show(attack_id: str) -> None:
 
     console.print("\n[bold cyan]Expected Indicators:[/bold cyan]")
     for indicator in attack.expected_indicators:
-        console.print(f"  • {indicator}")
+        console.print(f"  - {indicator}")
 
     console.print("\n[bold cyan]Remediation:[/bold cyan]")
     console.print(f"  {attack.remediation}")
@@ -314,7 +388,7 @@ def library_show(attack_id: str) -> None:
     if attack.references:
         console.print("\n[bold cyan]References:[/bold cyan]")
         for ref in attack.references:
-            console.print(f"  • {ref}")
+            console.print(f"  - {ref}")
 
 
 @library.command("stats")
@@ -349,7 +423,7 @@ def library_stats() -> None:
 @library.command("update")
 def library_update() -> None:
     """Update the attack library from configured sources."""
-    console.print("[yellow]Library update functionality coming in Phase 1.[/yellow]")
+    console.print("[yellow]Library update functionality coming soon.[/yellow]")
 
 
 @main.command()
@@ -364,6 +438,10 @@ def info() -> None:
     table.add_row("Version", __version__)
     table.add_row("Python required", ">=3.11")
     table.add_row("Attacks in library", str(len(lib)))
+    anthropic_set = "yes" if os.getenv("ANTHROPIC_API_KEY") else "no"
+    openai_set = "yes" if os.getenv("OPENAI_API_KEY") else "no"
+    table.add_row("ANTHROPIC_API_KEY in env", anthropic_set)
+    table.add_row("OPENAI_API_KEY in env", openai_set)
     table.add_row("GitHub", "https://github.com/SalCyberAware/PromptShield")
     table.add_row("License", "MIT")
     console.print(table)

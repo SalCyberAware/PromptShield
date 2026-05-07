@@ -18,9 +18,9 @@ class Severity(str, Enum):
 
 
 class Confidence(str, Enum):
-    LOW = "low"          # 0-69%
-    MEDIUM = "medium"    # 70-89%
-    HIGH = "high"        # 90-100%
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 class TargetType(str, Enum):
@@ -39,7 +39,6 @@ class AuthType(str, Enum):
 
 
 class AttackCategory(str, Enum):
-    """OWASP LLM Top 10 categories + MITRE ATLAS mapping."""
     LLM01_PROMPT_INJECTION = "LLM01"
     LLM02_INSECURE_OUTPUT = "LLM02"
     LLM03_TRAINING_DATA_POISONING = "LLM03"
@@ -65,15 +64,14 @@ class ScanStatus(str, Enum):
 
 
 class Attack(BaseModel):
-    """A single attack in the library."""
-    id: str = Field(..., description="Unique attack identifier (e.g., PS-LLM01-001)")
+    id: str
     category: AttackCategory
-    owasp_category: str = Field(..., description="OWASP LLM Top 10 category code")
-    mitre_atlas: Optional[str] = Field(None, description="MITRE ATLAS technique ID")
+    owasp_category: str
+    mitre_atlas: Optional[str] = None
     name: str
     description: str
     severity: Severity
-    prompt: str = Field(..., description="The actual adversarial prompt")
+    prompt: str
     expected_indicators: list[str] = Field(default_factory=list)
     false_positive_patterns: list[str] = Field(default_factory=list)
     remediation: str
@@ -87,11 +85,10 @@ class Attack(BaseModel):
 
 
 class TargetConfig(BaseModel):
-    """Configuration for a scan target."""
     url: str
     target_type: TargetType
     auth_type: AuthType = AuthType.NONE
-    auth_value: Optional[str] = Field(None, description="API key, token, or credentials")
+    auth_value: Optional[str] = None
     headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = 30
     rate_limit: int = Field(10, description="Max requests per minute")
@@ -102,16 +99,14 @@ class TargetConfig(BaseModel):
 
 
 class AnalyzerVerdict(BaseModel):
-    """Verdict from a single analyzer."""
     analyzer_name: str
-    success: bool = Field(..., description="Did the attack succeed?")
+    success: bool
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     reasoning: Optional[str] = None
     raw_response: Optional[str] = None
 
 
 class Finding(BaseModel):
-    """A single finding from a scan."""
     finding_id: str
     attack_id: str
     attack_category: AttackCategory
@@ -121,15 +116,29 @@ class Finding(BaseModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     title: str
     description: str
-    evidence: dict = Field(default_factory=dict, description="Request/response evidence")
+    evidence: dict = Field(default_factory=dict)
     analyzer_verdicts: list[AnalyzerVerdict] = Field(default_factory=list)
     remediation: str
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     needs_manual_review: bool = False
 
 
+class Transcript(BaseModel):
+    """Full record of a single attack attempt (request + response)."""
+    attack_id: str
+    attack_name: str
+    owasp_category: str
+    severity: Severity
+    prompt: str
+    response: str
+    response_truncated: bool = False
+    became_finding: bool = False
+    finding_id: Optional[str] = None
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    duration_seconds: float = 0.0
+
+
 class Scan(BaseModel):
-    """A complete scan run."""
     scan_id: str
     target: TargetConfig
     status: ScanStatus = ScanStatus.PENDING
@@ -138,13 +147,13 @@ class Scan(BaseModel):
     attacks_run: int = 0
     attacks_total: int = 0
     findings: list[Finding] = Field(default_factory=list)
+    transcripts: list[Transcript] = Field(default_factory=list)
     library_version: str
     config: dict = Field(default_factory=dict)
     error: Optional[str] = None
 
 
 class ScanSummary(BaseModel):
-    """High-level scan summary for reporting."""
     scan_id: str
     target_url: str
     total_findings: int
