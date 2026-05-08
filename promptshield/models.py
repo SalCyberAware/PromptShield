@@ -99,8 +99,9 @@ class TargetConfig(BaseModel):
 
 
 class AnalyzerVerdict(BaseModel):
+    """Verdict from a single analyzer."""
     analyzer_name: str
-    success: bool
+    success: bool = Field(..., description="Did the attack succeed according to this analyzer?")
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     reasoning: Optional[str] = None
     raw_response: Optional[str] = None
@@ -136,6 +137,7 @@ class Transcript(BaseModel):
     finding_id: Optional[str] = None
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_seconds: float = 0.0
+    analyzers_run: list[str] = Field(default_factory=list)
 
 
 class Scan(BaseModel):
@@ -151,6 +153,7 @@ class Scan(BaseModel):
     library_version: str
     config: dict = Field(default_factory=dict)
     error: Optional[str] = None
+    analyzers_used: list[str] = Field(default_factory=list)
 
 
 class ScanSummary(BaseModel):
