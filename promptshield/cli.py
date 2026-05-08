@@ -18,7 +18,6 @@ from .engines.api_scanner import APIScanner, APIProvider, detect_provider
 from .models import AttackCategory, AuthType, Severity, TargetConfig, TargetType
 from .reporters.json_reporter import JSONReporter
 
-# Load .env from current working directory if present
 load_dotenv()
 
 console = Console()
@@ -56,7 +55,6 @@ SEVERITY_COLOR = {
 
 
 def resolve_api_key(target_url: str, explicit_key: str | None) -> str | None:
-    """Resolve the API key from CLI flag, env var, or .env file. Never logs the key."""
     if explicit_key:
         return explicit_key
 
@@ -99,13 +97,8 @@ def main(ctx: click.Context, version: bool) -> None:
     "--auth-type",
     type=click.Choice(["none", "bearer", "api_key"]),
     default="api_key",
-    help="Authentication type. Default: api_key.",
 )
-@click.option(
-    "--api-key",
-    default=None,
-    help="API key. PREFER setting ANTHROPIC_API_KEY or OPENAI_API_KEY in .env instead.",
-)
+@click.option("--api-key", default=None, help="API key. Prefer setting it in .env.")
 @click.option("--categories", default=None, help="Comma-separated OWASP categories (e.g., LLM01,LLM06).")
 @click.option("--rate-limit", default=10, help="Max requests per minute.")
 @click.option("--timeout", default=30, help="Request timeout in seconds.")
@@ -113,6 +106,11 @@ def main(ctx: click.Context, version: bool) -> None:
 @click.option("--dry-run", is_flag=True, help="Show what would be scanned without sending requests.")
 @click.option("--verbose", "-v", is_flag=True, help="Print full request/response transcripts.")
 @click.option("--no-transcripts", is_flag=True, help="Do not save transcripts in the output JSON.")
+@click.option(
+    "--use-ai-analyzer",
+    is_flag=True,
+    help="Run Claude AI analyzer in addition to pattern matching for higher accuracy.",
+)
 def scan(
     target: str,
     target_type: str,
@@ -125,6 +123,7 @@ def scan(
     dry_run: bool,
     verbose: bool,
     no_transcripts: bool,
+    use_ai_analyzer: bool,
 ) -> None:
     """Run a vulnerability scan against an LLM target."""
     print_banner()
@@ -152,15 +151,17 @@ def scan(
                 "or pass --api-key (less secure)."
             )
             sys.exit(1)
-        api_key_present = True
         if api_key:
             key_source = "command line (less secure - use .env instead)"
         else:
             key_source = "environment / .env file"
     else:
         resolved_key = None
-        api_key_present = False
         key_source = "none"
+
+    analyzers_str = "pattern_analyzer"
+    if use_ai_analyzer:
+        analyzers_str += " + claude_analyzer (AI)"
 
     panel_text = (
         f"[bold]Target:[/bold] {target}\n"
@@ -170,6 +171,7 @@ def scan(
         f"[bold]Rate limit:[/bold] {rate_limit} req/min\n"
         f"[bold]Categories:[/bold] {categories or 'all'}\n"
         f"[bold]Attacks loaded:[/bold] {len(selected_attacks)}\n"
+        f"[bold]Analyzers:[/bold] {analyzers_str}\n"
         f"[bold]Save transcripts:[/bold] {'no' if no_transcripts else 'yes'}\n"
         f"[bold]Verbose:[/bold] {'yes' if verbose else 'no'}"
     )
@@ -207,6 +209,13 @@ def scan(
     scanner = APIScanner(target_config, selected_attacks)
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
+    if use_ai_analyzer:
+        estimated_cost = len(selected_attacks) * 0.003
+        console.print(
+            f"\n[yellow]AI analyzer enabled.[/yellow] Estimated cost: ~${estimated_cost:.3f} "
+            f"({len(selected_attacks)} attacks × ~$0.003 each)"
+        )
+
     console.print(f"\n[cyan]Starting scan {scan_id}...[/cyan]\n")
 
     progress = Progress(
@@ -229,6 +238,7 @@ def scan(
                 library_version="1.0.0",
                 on_progress=update_progress,
                 save_transcripts=not no_transcripts,
+                use_ai_analyzer=use_ai_analyzer,
             )
         )
 
@@ -256,6 +266,7 @@ def print_summary(scan_result) -> None:
     summary_table.add_row("Attacks run", f"{scan_result.attacks_run}/{scan_result.attacks_total}")
     summary_table.add_row("Findings", str(len(scan_result.findings)))
     summary_table.add_row("Transcripts saved", str(len(scan_result.transcripts)))
+    summary_table.add_row("Analyzers used", ", ".join(scan_result.analyzers_used))
 
     if scan_result.started_at and scan_result.completed_at:
         duration = (scan_result.completed_at - scan_result.started_at).total_seconds()
@@ -271,15 +282,19 @@ def print_summary(scan_result) -> None:
         findings_table.add_column("OWASP")
         findings_table.add_column("Title")
         findings_table.add_column("Confidence")
+        findings_table.add_column("Analyzers", style="dim")
 
         for finding in scan_result.findings:
             sev_color = SEVERITY_COLOR.get(finding.severity.value, "white")
+            agreed = finding.evidence.get("analyzers_agreed", False)
+            agreement_marker = "✓ agreed" if agreed and len(finding.analyzer_verdicts) > 1 else f"{len(finding.analyzer_verdicts)} run"
             findings_table.add_row(
                 finding.finding_id,
                 f"[{sev_color}]{finding.severity.value}[/{sev_color}]",
                 finding.evidence.get("owasp_category", "-"),
                 finding.title[:50],
                 f"{finding.confidence_score*100:.0f}%",
+                agreement_marker,
             )
 
         console.print(findings_table)
@@ -293,10 +308,11 @@ def print_transcripts(scan_result) -> None:
     for transcript in scan_result.transcripts:
         sev_color = SEVERITY_COLOR.get(transcript.severity.value, "white")
         marker = "[red]FINDING[/red]" if transcript.became_finding else "[green]CLEAN[/green]"
+        analyzers_str = ", ".join(transcript.analyzers_run) if transcript.analyzers_run else "none"
         header = (
             f"[bold]{transcript.attack_id}[/bold] · {transcript.owasp_category} · "
             f"[{sev_color}]{transcript.severity.value}[/{sev_color}] · {marker} · "
-            f"{transcript.duration_seconds}s"
+            f"{transcript.duration_seconds}s · analyzers: {analyzers_str}"
         )
         console.print(header)
         console.print(f"[bold]Attack:[/bold] {transcript.attack_name}")
@@ -442,6 +458,7 @@ def info() -> None:
     openai_set = "yes" if os.getenv("OPENAI_API_KEY") else "no"
     table.add_row("ANTHROPIC_API_KEY in env", anthropic_set)
     table.add_row("OPENAI_API_KEY in env", openai_set)
+    table.add_row("AI analyzer available", "yes" if anthropic_set == "yes" else "no (needs ANTHROPIC_API_KEY)")
     table.add_row("GitHub", "https://github.com/SalCyberAware/PromptShield")
     table.add_row("License", "MIT")
     console.print(table)
