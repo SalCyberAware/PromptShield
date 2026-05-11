@@ -4,11 +4,14 @@
 
 **Open-source vulnerability scanner for LLM applications**
 
-Tests AI endpoints and web-based chatbots against the OWASP LLM Top 10, MITRE ATLAS techniques, and custom adversarial attacks.
+Tests AI endpoints and chatbots against the OWASP LLM Top 10, MITRE ATLAS techniques, and custom adversarial attacks.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11+-3b82f6?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Status](https://img.shields.io/badge/Status-Phase%201%20In%20Development-orange?style=for-the-badge)](#)
+[![CI](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3b82f6?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Tests](https://img.shields.io/badge/tests-71%20passing-22c55e?style=flat-square)](#testing)
+[![Attacks](https://img.shields.io/badge/attacks-50-orange?style=flat-square)](#attack-library)
+[![OWASP LLM Top 10](https://img.shields.io/badge/OWASP%20LLM-Top%2010%20Coverage-purple?style=flat-square)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
 
 </div>
 
@@ -22,48 +25,48 @@ PromptShield fills that gap.
 
 **The Problem:** Companies are deploying LLMs everywhere but have no standardized way to test them for security vulnerabilities. Existing AI red-teaming requires expert humans, expensive consultants, or proprietary tools costing $50,000+/year.
 
-**The Solution:** A community-driven, open-source scanner that automatically tests AI endpoints and applications against industry-standard frameworks (OWASP LLM Top 10, MITRE ATLAS) and produces audit-ready reports.
+**The Solution:** A community-driven, open-source scanner that automatically tests AI endpoints against industry-standard frameworks (OWASP LLM Top 10, MITRE ATLAS) using a multi-analyzer ensemble approach for low false-positive rates.
 
 ---
 
 ## Status
 
-PromptShield is in active early development as part of an MS Cybersecurity practicum at Georgia Tech. Phase 1 (core CLI scanner) is currently being built.
+**Phase 1 complete.** PromptShield has a working CLI scanner with 50 attacks covering all 10 OWASP LLM Top 10 categories, two complementary analyzers (pattern-based + Claude AI), and a 71-test pytest suite running on Python 3.11, 3.12, and 3.13.
 
 ### Roadmap
 
-- **Phase 1** (in progress): Core CLI scanner with OWASP LLM Top 10 attack library
-- **Phase 2**: Web application scanner (Playwright integration)
-- **Phase 3**: Multi-model ensemble analysis engine
-- **Phase 4**: Web UI and audit-ready reporting (PDF/HTML/SARIF)
-- **Phase 5**: Research paper and empirical study of public AI applications
+- ✅ **Phase 1** (complete): Core CLI scanner with 50-attack OWASP LLM Top 10 library, multi-analyzer engine, pytest suite
+- 🚧 **Phase 2** (next): Web application scanner via Playwright
+- 📋 **Phase 3**: Additional ensemble analyzers (GPT-4o-mini validator)
+- 📋 **Phase 4**: Web UI + audit-ready reporting (PDF / HTML / SARIF)
+- 📋 **Phase 5**: Research paper and empirical study of public AI applications
 
 ---
 
-## Planned Features
+## Features
 
-- Tests AI API endpoints (OpenAI, Anthropic, Azure OpenAI, custom)
-- Tests AI-powered web applications via Playwright
-- OWASP LLM Top 10 coverage (10 categories)
-- MITRE ATLAS technique mapping
-- Multi-model ensemble analysis (Claude + GPT-4o-mini + optional local Llama 3)
-- Confidence-weighted voting for low false positive rate
-- Multiple report formats: JSON, HTML, PDF, CSV, SARIF
-- Privacy-first: local-first design, zero data retention by default
-- CLI for power users + Web UI for accessibility
-- Encrypted credential storage
-- Resume-from-checkpoint scanning
-- GitHub Actions integration via SARIF
+### Working Today
+
+- **50 attacks** covering all 10 OWASP LLM Top 10 categories
+- **Multi-analyzer engine**: Pattern-based + Claude AI analyzers with confidence-weighted voting
+- **Multi-provider support**: Auto-detects Anthropic and OpenAI APIs
+- **Verbose mode**: Inspect full prompt/response transcripts for research
+- **Secret redaction**: API keys automatically redacted from saved reports
+- **Environment-based auth**: Loads API keys from `.env` (never on the command line)
+- **MITRE ATLAS mapping**: Attacks tagged with corresponding ATLAS techniques where applicable
+- **Rich CLI** with colored output, progress bars, and structured tables
+
+### Planned
+
+- Web application scanning (Playwright)
+- GPT-4o-mini validator for ensemble analysis
+- HTML/PDF/SARIF report formats
+- Web UI dashboard
+- GitHub Actions SARIF integration
 
 ---
 
-## Installation (Coming Soon)
-
-```bash
-pip install promptshield
-```
-
-For now, install from source:
+## Installation
 
 ```bash
 git clone https://github.com/SalCyberAware/PromptShield.git
@@ -71,76 +74,164 @@ cd PromptShield
 pip install -e ".[dev]"
 ```
 
----
+Requires Python 3.11+.
 
-## Quick Start (Planned CLI)
+### Configure API Keys
+
+Copy `.env.example` to `.env` and add your API keys:
 
 ```bash
-# Scan an API endpoint
-promptshield scan --target https://api.example.com/chat --auth-type bearer --api-key XXX
+cp .env.example .env
+# Edit .env and add:
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+```
 
-# Scan a web chatbot
-promptshield scan --target https://chatbot.example.com --type web
+**Never** commit `.env` to source control. PromptShield's `.gitignore` excludes it by default.
 
-# Test specific OWASP categories
-promptshield scan --target XXX --categories LLM01,LLM06
+---
 
-# Generate a report
-promptshield report --scan-id abc123 --format pdf
+## Quick Start
+
+```bash
+# Show system info (verifies your API keys are loaded)
+promptshield info
 
 # Browse the attack library
-promptshield library list --category LLM01
+promptshield library list
+promptshield library stats
+promptshield library show PS-LLM01-001
+
+# Scan an API endpoint (pattern matching only, free)
+promptshield scan --target https://api.anthropic.com/v1/messages --categories LLM10
+
+# Scan with AI analyzer enabled (uses Claude for deeper semantic analysis)
+promptshield scan --target https://api.anthropic.com/v1/messages \
+  --categories LLM10 \
+  --use-ai-analyzer \
+  --verbose \
+  --output scan_results.json
+
+# Dry-run to see what would be scanned
+promptshield scan --target https://api.example.com --dry-run
+
+# Scan specific OWASP categories
+promptshield scan --target https://api.example.com --categories LLM01,LLM06
 ```
 
 ---
 
-## Why PromptShield?
+## Attack Library
 
-### vs Manual Red Teaming
-- **Manual:** Requires expert humans, slow, expensive, inconsistent
-- **PromptShield:** Automated, fast, repeatable, contributable
+PromptShield ships with **50 attacks** across all OWASP LLM Top 10 categories:
 
-### vs Commercial AI Security Tools
-- **Commercial:** $50,000+/year, vendor lock-in, opaque methodology
-- **PromptShield:** Free, open-source, transparent, community-driven
+| Category | Description | Count |
+|----------|-------------|-------|
+| LLM01 | Prompt Injection | 10 |
+| LLM02 | Insecure Output Handling | 5 |
+| LLM03 | Training Data Poisoning | 3 |
+| LLM04 | Model Denial of Service | 5 |
+| LLM05 | Supply Chain Vulnerabilities | 3 |
+| LLM06 | Sensitive Information Disclosure | 6 |
+| LLM07 | Insecure Plugin Design | 3 |
+| LLM08 | Excessive Agency | 5 |
+| LLM09 | Overreliance | 3 |
+| LLM10 | Model Theft | 3 |
+| CUSTOM | PromptShield Research | 4 |
 
-### vs Single-Model Testing
-- **Single-model:** Bias from one analyzer, single point of failure
-- **PromptShield:** Ensemble of Claude + GPT + local Llama with voting
+Severity distribution: **2 critical · 21 high · 21 medium · 6 low**
+
+Attacks reference real research (CVE-2021-44228 Log4Shell, Greshake et al. 2023, Zou et al. 2023, Carlini et al. training data extraction) and include remediation guidance for each finding.
+
+---
+
+## Multi-Analyzer Architecture
+
+PromptShield uses two complementary analyzers that vote on whether an attack succeeded:
+
+```
+Target's Response
+       │
+       ├──→ PatternAnalyzer (fast, free, deterministic)
+       │       └─ Regex/keyword matching against expected indicators
+       │
+       └──→ ClaudeAnalyzer (slower, costs ~$0.003 per call, semantic)
+               └─ Claude evaluates whether the attack succeeded
+                                                    │
+       Combined Verdict ←──────────────────────────┘
+       (both analyzers agree = HIGH confidence finding)
+       (analyzers disagree = MEDIUM confidence, flagged for review)
+       (neither detects = no finding)
+```
+
+### Why this matters
+
+In testing against Anthropic's Claude API, pattern-only detection correctly identified 1 of 2 LLM10 model theft attacks. Adding the Claude AI analyzer recovered the missed attack (PS-LLM10-002 capability mapping) — empirical evidence that pure pattern matching has measurable false-negative rates, and that ensemble approaches reduce them.
+
+This finding will be cited in the eventual research paper.
+
+---
+
+## Testing
+
+PromptShield has a comprehensive pytest suite that runs on every push via GitHub Actions:
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=promptshield --cov-report=term-missing
+```
+
+**Current status:** 71 tests passing in ~3 seconds. 50% overall coverage with 100% on critical data models and analyzers.
+
+| Module | Coverage |
+|--------|----------|
+| `models.py` | 100% |
+| `analyzers/pattern.py` | 100% |
+| `analyzers/claude_analyzer.py` | 88% |
+| `attacks/library.py` | 96% |
+| `reporters/json_reporter.py` | 96% |
+| `engines/api_scanner.py` | 58% |
+
+All HTTP calls and API interactions are mocked in tests — no real API calls, no costs, no flaky network dependencies.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    PromptShield CLI / Web UI                │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-   Attack Library      Scanner Engine      Multi-Model
-   (OWASP, ATLAS,      (API + Web)         Analysis Engine
-   community)                              (Pattern + LLMs)
-        │                    │                    │
-        └────────────────────┼────────────────────┘
-                             ▼
-                       Report Generator
-                  (JSON, PDF, HTML, SARIF)
+PromptShield/
+├── promptshield/
+│   ├── cli.py                  # Click + Rich command-line interface
+│   ├── models.py               # Pydantic data models
+│   ├── attacks/
+│   │   ├── library.py          # Attack library loader and filtering
+│   │   └── data/attacks_v1.yaml
+│   ├── analyzers/
+│   │   ├── pattern.py          # Fast pattern-based analyzer
+│   │   └── claude_analyzer.py  # AI-powered semantic analyzer
+│   ├── engines/
+│   │   ├── base.py             # Multi-analyzer orchestration
+│   │   └── api_scanner.py      # Multi-provider API scanner
+│   └── reporters/
+│       └── json_reporter.py    # JSON output with secret redaction
+└── tests/                      # 71 pytest tests
 ```
 
 ---
 
 ## Tech Stack
 
-- **Language:** Python 3.11+
-- **CLI:** Click + Rich
-- **API Scanning:** httpx (async)
-- **Web Scanning:** Playwright
-- **AI Analyzers:** Anthropic Claude, OpenAI GPT-4o-mini, optional Llama 3 via Ollama
-- **Web Framework:** FastAPI + React/Vite (Phase 4)
-- **Report Generation:** Jinja2, WeasyPrint
-- **Data Models:** Pydantic v2
+- **Language**: Python 3.11+
+- **CLI**: Click + Rich
+- **API Scanning**: httpx (async)
+- **Web Scanning** (Phase 2): Playwright
+- **AI Analyzers**: Anthropic Claude (working), OpenAI GPT-4o-mini (planned)
+- **Web Framework** (Phase 4): FastAPI + React/Vite
+- **Data Models**: Pydantic v2
+- **Testing**: pytest, pytest-asyncio, pytest-cov
 
 ---
 
@@ -148,16 +239,16 @@ promptshield library list --category LLM01
 
 PromptShield is built with security and privacy as first-class concerns:
 
-- **Zero data retention** by default — no scan data stored unless explicitly enabled
+- **Zero data retention by default** — no scan data stored unless explicitly enabled
 - **No telemetry** — PromptShield never phones home
-- **Local-first design** — works fully offline once attack library is downloaded
-- **Encrypted credentials** at rest using AES-256 with user passphrase
-- **Responsible disclosure** templates included
-- **Ethical use only** — tool requires authorization to scan targets
+- **Automatic secret redaction** — API keys and credentials redacted from JSON outputs
+- **Local-first design** — works fully offline once attack library is loaded
+- **Environment-based auth** — API keys loaded from `.env`, never required on the command line
+- **Responsible use only** — tool is designed for testing systems you own or have authorization to test
 
----
+See [SECURITY.md](SECURITY.md) for the full vulnerability disclosure policy.
 
-## Compliance Alignment
+### Compliance Alignment
 
 - NIST AI Risk Management Framework (AI RMF)
 - ISO 42001 (AI Management Systems)
@@ -169,13 +260,30 @@ PromptShield is built with security and privacy as first-class concerns:
 
 ## Contributing
 
-Once Phase 1 stabilizes, contributions will be welcome — especially:
-- New attacks for the library
+Contributions are welcome — especially:
+
+- **New attacks** for the library (highest impact, low barrier to entry)
 - Additional analyzer integrations
 - Documentation improvements
 - Bug reports and feature requests
 
-For now, watch the repo for progress.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details on the attack contribution format and pull request process.
+
+---
+
+## Why PromptShield?
+
+### vs Manual Red Teaming
+- **Manual**: Requires expert humans, slow, expensive, inconsistent
+- **PromptShield**: Automated, fast, repeatable, community-contributable
+
+### vs Commercial AI Security Tools
+- **Commercial**: $50,000+/year, vendor lock-in, opaque methodology
+- **PromptShield**: Free, open-source, transparent, community-driven
+
+### vs Single-Model Testing
+- **Single-model**: Bias from one analyzer, single point of failure
+- **PromptShield**: Ensemble of pattern matching + Claude AI with confidence-weighted voting
 
 ---
 
@@ -186,22 +294,13 @@ M.S. Cybersecurity — Georgia Tech (in progress)
 CompTIA Security+ | Network+ | A+ | Cisco CCNA
 GitHub: [@SalCyberAware](https://github.com/SalCyberAware)
 
-Other security tools by this author:
-- [ThreatScan](https://github.com/SalCyberAware/ThreatScan) — Multi-engine threat intelligence platform
-- [SOCTriage](https://github.com/SalCyberAware/SOCTriage) — AI-powered SOC alert triage assistant
+### Other open-source security tools by this author
+
+- [**ThreatScan**](https://github.com/SalCyberAware/ThreatScan) — Multi-engine threat intelligence platform
+- [**SOCTriage**](https://github.com/SalCyberAware/SOCTriage) — AI-powered SOC alert triage assistant
 
 ---
 
 ## License
 
-**MIT** — free to use, modify, and distribute.
-
----
-
-<div align="center">
-
-Built as part of an MS Cybersecurity practicum at Georgia Tech.
-
-[Report Issue](https://github.com/SalCyberAware/PromptShield/issues) · [Request Feature](https://github.com/SalCyberAware/PromptShield/issues)
-
-</div>
+MIT — free to use, modify, and distribute. See [LICENSE](LICENSE).
