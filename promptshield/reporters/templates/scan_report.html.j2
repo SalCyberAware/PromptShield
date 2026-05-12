@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptShield Scan Report &middot; {{ scan.scan_id }}</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-elev: #f8fafc;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --accent: #0ea5e9;
+    --sev-critical: #dc2626;
+    --sev-high: #ea580c;
+    --sev-medium: #ca8a04;
+    --sev-low: #16a34a;
+    --sev-info: #2563eb;
+    --conf-high: #059669;
+    --conf-medium: #d97706;
+    --conf-low: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --bg-elev: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
+  h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.025em; }
+  h1 .shield { color: var(--accent); }
+  h2 { font-size: 20px; margin: 40px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 0; }
+  h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600; }
+  p { margin: 0 0 8px; }
+  code {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .scan-meta { color: var(--text-muted); font-size: 14px; line-height: 1.7; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .stat-value.small { font-size: 14px; font-weight: 500; }
+  .stat-value.critical { color: var(--sev-critical); }
+  .stat-value.high { color: var(--sev-high); }
+  .stat-value.medium { color: var(--sev-medium); }
+  .stat-value.low { color: var(--sev-low); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #ffffff;
+    white-space: nowrap;
+  }
+  .badge.sev-critical { background: var(--sev-critical); }
+  .badge.sev-high { background: var(--sev-high); }
+  .badge.sev-medium { background: var(--sev-medium); }
+  .badge.sev-low { background: var(--sev-low); }
+  .badge.sev-info { background: var(--sev-info); }
+  .badge.conf-high { background: var(--conf-high); }
+  .badge.conf-medium { background: var(--conf-medium); }
+  .badge.conf-low { background: var(--conf-low); }
+  .badge.review { background: #b45309; }
+  .finding { background: var(--bg-elev); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
+  .finding.sev-critical { border-left-color: var(--sev-critical); }
+  .finding.sev-high { border-left-color: var(--sev-high); }
+  .finding.sev-medium { border-left-color: var(--sev-medium); }
+  .finding.sev-low { border-left-color: var(--sev-low); }
+  .finding.sev-info { border-left-color: var(--sev-info); }
+  .finding-head { padding: 16px 20px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .finding-head .left { min-width: 0; flex: 1; }
+  .finding-id { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .tag-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .finding-body { padding: 16px 20px 20px; border-top: 1px solid var(--border); }
+  .finding-section { margin-bottom: 16px; }
+  .finding-section:last-child { margin-bottom: 0; }
+  .kv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .kv-table th, .kv-table td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .kv-table th { width: 30%; color: var(--text-muted); font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+  .kv-table tr:last-child th, .kv-table tr:last-child td { border-bottom: none; }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  details { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; }
+  details summary { cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; user-select: none; }
+  details[open] summary { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  details summary::-webkit-details-marker { display: none; }
+  details summary .left, details summary .right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .verdict { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; font-size: 13px; flex-wrap: wrap; }
+  .verdict:last-child { margin-bottom: 0; }
+  .verdict-yes { color: var(--sev-high); font-weight: 600; }
+  .verdict-no { color: var(--sev-low); font-weight: 600; }
+  .verdict .reasoning { flex-basis: 100%; color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+  .empty { background: var(--bg-elev); border: 1px dashed var(--border); border-radius: 8px; padding: 40px 24px; text-align: center; color: var(--text-muted); }
+  .empty strong { color: var(--text); display: block; font-size: 16px; margin-bottom: 6px; }
+  footer { margin-top: 56px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 13px; text-align: center; }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1><span class="shield">PromptShield</span> Scan Report</h1>
+    <div class="scan-meta">
+      Scan <code>{{ scan.scan_id }}</code><br>
+      Target <code>{{ scan.target.url }}</code><br>
+      Library v{{ scan.library_version }}
+      {%- if scan.completed_at %} &middot; completed {{ scan.completed_at }}{% endif %}
+    </div>
+  </header>
+
+  <h2>Summary</h2>
+  <div class="summary">
+    <div class="stat">
+      <div class="stat-label">Total findings</div>
+      <div class="stat-value">{{ scan.findings|length }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Critical</div>
+      <div class="stat-value critical">{{ scan._by_severity.critical }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">High</div>
+      <div class="stat-value high">{{ scan._by_severity.high }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Medium</div>
+      <div class="stat-value medium">{{ scan._by_severity.medium }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Low</div>
+      <div class="stat-value low">{{ scan._by_severity.low }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Attacks run</div>
+      <div class="stat-value">{{ scan.attacks_run }}<span style="color: var(--text-muted); font-size: 14px;"> / {{ scan.attacks_total }}</span></div>
+    </div>
+    {% if scan._duration_seconds is not none %}
+    <div class="stat">
+      <div class="stat-label">Duration</div>
+      <div class="stat-value">{{ scan._duration_seconds }}s</div>
+    </div>
+    {% endif %}
+    <div class="stat">
+      <div class="stat-label">Analyzers</div>
+      <div class="stat-value small">{{ scan.analyzers_used|join(', ') or 'none' }}</div>
+    </div>
+  </div>
+
+  {% if scan._by_category %}
+  <h2>Findings by Category</h2>
+  <table class="kv-table">
+    {% for cat, count in scan._by_category.items() %}
+    <tr><th>{{ cat }}</th><td>{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  <h2>Findings</h2>
+  {% if scan.findings %}
+    {% for f in scan.findings %}
+    <div class="finding sev-{{ f.severity }}">
+      <div class="finding-head">
+        <div class="left">
+          <h3>{{ f.title }}</h3>
+          <div class="finding-id">{{ f.finding_id }} &middot; {{ f.attack_id }}</div>
+        </div>
+        <div class="tag-row">
+          <span class="badge sev-{{ f.severity }}">{{ f.severity }}</span>
+          <span class="badge conf-{{ f.confidence }}">{{ f.confidence }} ({{ (f.confidence_score * 100)|round|int }}%)</span>
+          {% if f.evidence and f.evidence.owasp_category %}
+          <span class="badge sev-info">{{ f.evidence.owasp_category }}</span>
+          {% endif %}
+          {% if f.needs_manual_review %}
+          <span class="badge review">manual review</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="finding-body">
+        <div class="finding-section">
+          <h4>Description</h4>
+          <p>{{ f.description }}</p>
+        </div>
+
+        {% if f.analyzer_verdicts %}
+        <div class="finding-section">
+          <h4>Analyzer verdicts</h4>
+          {% for v in f.analyzer_verdicts %}
+          <div class="verdict">
+            <strong>{{ v.analyzer_name }}</strong>
+            <span class="{% if v.success %}verdict-yes{% else %}verdict-no{% endif %}">
+              {% if v.success %}attack succeeded{% else %}attack failed{% endif %}
+            </span>
+            <span style="color: var(--text-muted);">&middot; {{ (v.confidence_score * 100)|round|int }}% confidence</span>
+            {% if v.reasoning %}<div class="reasoning">{{ v.reasoning }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if f.evidence %}
+        <div class="finding-section">
+          <h4>Evidence</h4>
+          <table class="kv-table">
+            {% for key, value in f.evidence.items() %}
+            <tr>
+              <th>{{ key }}</th>
+              <td>
+                {% if value is mapping or (value is iterable and value is not string) %}
+                  <pre>{{ value }}</pre>
+                {% else %}
+                  {{ value }}
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+
+        <div class="finding-section">
+          <h4>Remediation</h4>
+          <p>{{ f.remediation }}</p>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">
+      <strong>No findings detected.</strong>
+      All {{ scan.attacks_run }} attacks ran without producing a verdict above the confidence threshold.
+    </div>
+  {% endif %}
+
+  {% if scan.transcripts %}
+  <h2>Transcripts <span style="font-size: 14px; color: var(--text-muted); font-weight: 400;">({{ scan.transcripts|length }} total)</span></h2>
+  {% for t in scan.transcripts %}
+  <details>
+    <summary>
+      <span class="left">
+        <code>{{ t.attack_id }}</code>
+        <span style="color: var(--text-muted);">{{ t.owasp_category }}</span>
+        <span class="badge sev-{{ t.severity }}">{{ t.severity }}</span>
+        <span>{{ t.attack_name }}</span>
+      </span>
+      <span class="right" style="color: var(--text-muted); font-size: 12px;">
+        {% if t.became_finding %}finding{% else %}clean{% endif %} &middot; {{ t.duration_seconds }}s
+      </span>
+    </summary>
+    <div class="finding-section">
+      <h4>Prompt sent</h4>
+      <pre>{{ t.prompt }}</pre>
+    </div>
+    <div class="finding-section">
+      <h4>Response received{% if t.response_truncated %} (truncated){% endif %}</h4>
+      <pre>{{ t.response }}</pre>
+    </div>
+    <div class="finding-section">
+      <h4>Analyzers run</h4>
+      <p>{{ t.analyzers_run|join(', ') or 'none' }}</p>
+    </div>
+  </details>
+  {% endfor %}
+  {% endif %}
+
+  <footer>
+    Generated by <a href="https://github.com/SalCyberAware/PromptShield">PromptShield</a>
+    &middot; Status: <strong>{{ scan.status }}</strong>
+    {% if scan.error %}&middot; Error: {{ scan.error }}{% endif %}
+  </footer>
+
+</div>
+</body>
+</html>
