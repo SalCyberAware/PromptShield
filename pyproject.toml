@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptshield"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source vulnerability scanner for LLM applications"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -67,7 +67,7 @@ promptshield = "promptshield.cli:main"
 include = ["promptshield*"]
 
 [tool.setuptools.package-data]
-promptshield = ["attacks/data/*.yaml", "attacks/data/*.json"]
+promptshield = ["attacks/data/*.yaml", "attacks/data/*.json", "reporters/templates/*.j2"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
