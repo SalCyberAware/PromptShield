@@ -25,21 +25,21 @@ console = Console()
 
 def print_banner() -> None:
     banner = """
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║    ██████╗ ██████╗  ██████╗ ███╗   ███╗██████╗ ████████╗     ║
-║    ██╔══██╗██╔══██╗██╔═══██╗████╗ ████║██╔══██╗╚══██╔══╝     ║
-║    ██████╔╝██████╔╝██║   ██║██╔████╔██║██████╔╝   ██║        ║
-║    ██╔═══╝ ██╔══██╗██║   ██║██║╚██╔╝██║██╔═══╝    ██║        ║
-║    ██║     ██║  ██║╚██████╔╝██║ ╚═╝ ██║██║        ██║        ║
-║    ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝        ╚═╝        ║
-║                                                               ║
-║    SHIELD                                                     ║
-║                                                               ║
-║    Vulnerability Scanner for LLM Applications                 ║
-║    OWASP LLM Top 10  +  MITRE ATLAS  +  Custom Attacks        ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘                                                               â•‘
+â•‘    â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•—  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ•—   â–ˆâ–ˆâ–ˆâ•—â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•—     â•‘
+â•‘    â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â–ˆâ–ˆâ•”â•â•â•â–ˆâ–ˆâ•—â–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â•šâ•â•â–ˆâ–ˆâ•”â•â•â•     â•‘
+â•‘    â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â–ˆâ–ˆâ–ˆâ–ˆâ•”â–ˆâ–ˆâ•‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•   â–ˆâ–ˆâ•‘        â•‘
+â•‘    â–ˆâ–ˆâ•”â•â•â•â• â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘â•šâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â•â•â•â•    â–ˆâ–ˆâ•‘        â•‘
+â•‘    â–ˆâ–ˆâ•‘     â–ˆâ–ˆâ•‘  â–ˆâ–ˆâ•‘â•šâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘ â•šâ•â• â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘        â–ˆâ–ˆâ•‘        â•‘
+â•‘    â•šâ•â•     â•šâ•â•  â•šâ•â• â•šâ•â•â•â•â•â• â•šâ•â•     â•šâ•â•â•šâ•â•        â•šâ•â•        â•‘
+â•‘                                                               â•‘
+â•‘    SHIELD                                                     â•‘
+â•‘                                                               â•‘
+â•‘    Vulnerability Scanner for LLM Applications                 â•‘
+â•‘    OWASP LLM Top 10  +  MITRE ATLAS  +  Custom Attacks        â•‘
+â•‘                                                               â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     """
     console.print(banner, style="cyan")
     console.print(f"  Version {__version__}\n", style="dim")
@@ -76,7 +76,7 @@ def resolve_api_key(target_url: str, explicit_key: str | None) -> str | None:
 @click.option("--version", is_flag=True, help="Show version and exit.")
 @click.pass_context
 def main(ctx: click.Context, version: bool) -> None:
-    """PromptShield — Open-source LLM vulnerability scanner."""
+    """PromptShield â€” Open-source LLM vulnerability scanner."""
     if version:
         click.echo(f"PromptShield v{__version__}")
         sys.exit(0)
@@ -102,7 +102,7 @@ def main(ctx: click.Context, version: bool) -> None:
 @click.option("--categories", default=None, help="Comma-separated OWASP categories (e.g., LLM01,LLM06).")
 @click.option("--rate-limit", default=10, help="Max requests per minute.")
 @click.option("--timeout", default=30, help="Request timeout in seconds.")
-@click.option("--output", "-o", default=None, help="Output JSON file path.")
+@click.option("--output", "-o", default=None, help="Output file path. Format auto-detected from extension (.json or .html).")
 @click.option("--dry-run", is_flag=True, help="Show what would be scanned without sending requests.")
 @click.option("--verbose", "-v", is_flag=True, help="Print full request/response transcripts.")
 @click.option("--no-transcripts", is_flag=True, help="Do not save transcripts in the output JSON.")
@@ -178,7 +178,7 @@ def scan(
     console.print(Panel(panel_text, title="Scan Configuration", border_style="cyan"))
 
     if dry_run:
-        console.print("\n[yellow]DRY RUN — no requests will be sent.[/yellow]")
+        console.print("\n[yellow]DRY RUN â€” no requests will be sent.[/yellow]")
         table = Table(title="Attacks that would be sent", border_style="cyan")
         table.add_column("ID", style="cyan")
         table.add_column("OWASP")
@@ -213,7 +213,7 @@ def scan(
         estimated_cost = len(selected_attacks) * 0.003
         console.print(
             f"\n[yellow]AI analyzer enabled.[/yellow] Estimated cost: ~${estimated_cost:.3f} "
-            f"({len(selected_attacks)} attacks × ~$0.003 each)"
+            f"({len(selected_attacks)} attacks Ã— ~$0.003 each)"
         )
 
     console.print(f"\n[cyan]Starting scan {scan_id}...[/cyan]\n")
@@ -250,7 +250,12 @@ def scan(
 
     if output:
         output_path = Path(output)
-        reporter = JSONReporter()
+        ext = output_path.suffix.lower()
+        if ext == ".html":
+            from .reporters.html_reporter import HTMLReporter
+            reporter = HTMLReporter()
+        else:
+            reporter = JSONReporter()
         saved = reporter.generate(scan_result, output_path)
         console.print(f"\n[green]Report saved to:[/green] {saved}")
 
@@ -287,7 +292,7 @@ def print_summary(scan_result) -> None:
         for finding in scan_result.findings:
             sev_color = SEVERITY_COLOR.get(finding.severity.value, "white")
             agreed = finding.evidence.get("analyzers_agreed", False)
-            agreement_marker = "✓ agreed" if agreed and len(finding.analyzer_verdicts) > 1 else f"{len(finding.analyzer_verdicts)} run"
+            agreement_marker = "âœ“ agreed" if agreed and len(finding.analyzer_verdicts) > 1 else f"{len(finding.analyzer_verdicts)} run"
             findings_table.add_row(
                 finding.finding_id,
                 f"[{sev_color}]{finding.severity.value}[/{sev_color}]",
@@ -310,9 +315,9 @@ def print_transcripts(scan_result) -> None:
         marker = "[red]FINDING[/red]" if transcript.became_finding else "[green]CLEAN[/green]"
         analyzers_str = ", ".join(transcript.analyzers_run) if transcript.analyzers_run else "none"
         header = (
-            f"[bold]{transcript.attack_id}[/bold] · {transcript.owasp_category} · "
-            f"[{sev_color}]{transcript.severity.value}[/{sev_color}] · {marker} · "
-            f"{transcript.duration_seconds}s · analyzers: {analyzers_str}"
+            f"[bold]{transcript.attack_id}[/bold] Â· {transcript.owasp_category} Â· "
+            f"[{sev_color}]{transcript.severity.value}[/{sev_color}] Â· {marker} Â· "
+            f"{transcript.duration_seconds}s Â· analyzers: {analyzers_str}"
         )
         console.print(header)
         console.print(f"[bold]Attack:[/bold] {transcript.attack_name}")
