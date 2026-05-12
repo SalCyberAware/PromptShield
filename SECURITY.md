@@ -10,7 +10,7 @@ PromptShield is a security tool, and we take its own security posture seriously.
 
 If you discover a security vulnerability in PromptShield itself, please report it privately via one of these channels:
 
-- **Email:** Sal127@proton.me
+- **Email:** Sal_CyberAware@proton.me
 - **GitHub Security Advisory:** Use GitHub's private vulnerability reporting feature on the [PromptShield repository](https://github.com/SalCyberAware/PromptShield/security/advisories/new)
 
 When reporting, please include:
