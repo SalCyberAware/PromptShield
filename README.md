@@ -215,7 +215,7 @@ pytest tests/ --cov=promptshield --cov-report=term-missing
 | `analyzers/claude_analyzer.py` | 88% |
 | `attacks/library.py` | 96% |
 | `reporters/json_reporter.py` | 96% |
-| `reporters/html_reporter.py` | ~95% |
+| `reporters/html_reporter.py` | 100% |
 | `engines/api_scanner.py` | 58% |
 
 All HTTP calls and API interactions are mocked in tests — no real API calls, no costs, no flaky network dependencies.
