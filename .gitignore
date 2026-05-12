@@ -59,3 +59,8 @@ coverage.xml
 # Playwright
 playwright-report/
 test-results/
+
+scan_demo.html
+scan_results.json
+*.scan.html
+*.scan.json
