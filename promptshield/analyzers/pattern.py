@@ -1,8 +1,6 @@
 """Pattern-based analyzer — uses regex/keyword matching to detect attack success."""
 from __future__ import annotations
 
-from typing import Optional
-
 from ..models import (
     AnalyzerVerdict,
     Attack,

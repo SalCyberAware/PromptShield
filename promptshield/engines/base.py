@@ -8,8 +8,7 @@ import asyncio
 import time
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from ..models import (
     AnalyzerVerdict,
@@ -68,7 +67,7 @@ class BaseScanner(ABC):
         self.errors: list[str] = []
 
     @abstractmethod
-    async def send_attack(self, attack: Attack) -> Optional[str]:
+    async def send_attack(self, attack: Attack) -> str | None:
         """Send a single attack and return the raw response text."""
         raise NotImplementedError
 
@@ -104,7 +103,7 @@ class BaseScanner(ABC):
             scan_id=scan_id,
             target=self.target,
             status=ScanStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             attacks_total=len(self.attacks),
             library_version=library_version,
             analyzers_used=analyzers_used,
@@ -117,7 +116,7 @@ class BaseScanner(ABC):
 
                 started = time.monotonic()
                 response = ""
-                finding: Optional[Finding] = None
+                finding: Finding | None = None
                 analyzers_run_for_attack: list[str] = []
 
                 try:
@@ -204,7 +203,7 @@ class BaseScanner(ABC):
             scan.status = ScanStatus.FAILED
             scan.error = str(exc)
         finally:
-            scan.completed_at = datetime.now(timezone.utc)
+            scan.completed_at = datetime.now(UTC)
             await self.cleanup()
 
         return scan

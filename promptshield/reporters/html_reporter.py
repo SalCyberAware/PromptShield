@@ -9,7 +9,6 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from ..models import Scan
 from .json_reporter import redact
 
-
 _TEMPLATE_NAME = "scan_report.html.j2"
 
 # Severity sort order (critical first, info last)

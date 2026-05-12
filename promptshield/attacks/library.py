@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -12,7 +11,7 @@ from ..models import Attack, AttackCategory, Severity
 class AttackLibrary:
     """Loads and manages the PromptShield attack library."""
 
-    def __init__(self, library_path: Optional[Path] = None) -> None:
+    def __init__(self, library_path: Path | None = None) -> None:
         if library_path is None:
             library_path = Path(__file__).parent / "data" / "attacks_v1.yaml"
         self.library_path = library_path
@@ -25,7 +24,7 @@ class AttackLibrary:
             self.attacks = []
             return
 
-        with open(self.library_path, "r", encoding="utf-8") as f:
+        with open(self.library_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         raw_attacks = data.get("attacks", [])
@@ -71,7 +70,7 @@ class AttackLibrary:
         """Return attacks that have a specific tag."""
         return [a for a in self.attacks if tag in a.tags]
 
-    def get(self, attack_id: str) -> Optional[Attack]:
+    def get(self, attack_id: str) -> Attack | None:
         """Get a single attack by ID."""
         for attack in self.attacks:
             if attack.id == attack_id:

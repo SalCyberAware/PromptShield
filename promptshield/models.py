@@ -1,10 +1,8 @@
 """Pydantic data models used throughout PromptShield."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
-
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -67,7 +65,7 @@ class Attack(BaseModel):
     id: str
     category: AttackCategory
     owasp_category: str
-    mitre_atlas: Optional[str] = None
+    mitre_atlas: str | None = None
     name: str
     description: str
     severity: Severity
@@ -78,7 +76,7 @@ class Attack(BaseModel):
     references: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     version: str = "1.0.0"
-    added_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    added_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ── Target Configuration ──────────────────────────────────────────────────────
@@ -88,11 +86,11 @@ class TargetConfig(BaseModel):
     url: str
     target_type: TargetType
     auth_type: AuthType = AuthType.NONE
-    auth_value: Optional[str] = None
+    auth_value: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = 30
     rate_limit: int = Field(10, description="Max requests per minute")
-    user_agent: Optional[str] = None
+    user_agent: str | None = None
 
 
 # ── Scan and Findings ─────────────────────────────────────────────────────────
@@ -103,8 +101,8 @@ class AnalyzerVerdict(BaseModel):
     analyzer_name: str
     success: bool = Field(..., description="Did the attack succeed according to this analyzer?")
     confidence_score: float = Field(..., ge=0.0, le=1.0)
-    reasoning: Optional[str] = None
-    raw_response: Optional[str] = None
+    reasoning: str | None = None
+    raw_response: str | None = None
 
 
 class Finding(BaseModel):
@@ -120,7 +118,7 @@ class Finding(BaseModel):
     evidence: dict = Field(default_factory=dict)
     analyzer_verdicts: list[AnalyzerVerdict] = Field(default_factory=list)
     remediation: str
-    detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     needs_manual_review: bool = False
 
 
@@ -134,8 +132,8 @@ class Transcript(BaseModel):
     response: str
     response_truncated: bool = False
     became_finding: bool = False
-    finding_id: Optional[str] = None
-    sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    finding_id: str | None = None
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     duration_seconds: float = 0.0
     analyzers_run: list[str] = Field(default_factory=list)
 
@@ -144,15 +142,15 @@ class Scan(BaseModel):
     scan_id: str
     target: TargetConfig
     status: ScanStatus = ScanStatus.PENDING
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     attacks_run: int = 0
     attacks_total: int = 0
     findings: list[Finding] = Field(default_factory=list)
     transcripts: list[Transcript] = Field(default_factory=list)
     library_version: str
     config: dict = Field(default_factory=dict)
-    error: Optional[str] = None
+    error: str | None = None
     analyzers_used: list[str] = Field(default_factory=list)
 
 

@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from promptshield.models import (
     AnalyzerVerdict,
-    Attack,
     AttackCategory,
     AuthType,
     Confidence,

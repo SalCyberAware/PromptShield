@@ -9,7 +9,6 @@ from typing import Any
 
 from ..models import Scan
 
-
 # Patterns that look like API keys, tokens, or credentials
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[a-zA-Z0-9_\-]{20,}"),       # Anthropic

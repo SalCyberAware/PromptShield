@@ -1,8 +1,6 @@
 """Shared pytest fixtures for PromptShield tests."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from promptshield.models import (

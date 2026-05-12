@@ -10,7 +10,6 @@ Auto-detects format from the URL but allows manual override.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
 import httpx
 
@@ -41,13 +40,13 @@ class APIScanner(BaseScanner):
         self,
         target: TargetConfig,
         attacks: list[Attack],
-        provider: Optional[APIProvider] = None,
-        model: Optional[str] = None,
+        provider: APIProvider | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__(target, attacks)
         self.provider = provider or detect_provider(target.url)
         self.model = model or self._default_model()
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     def _default_model(self) -> str:
         """Reasonable default model per provider for testing."""
@@ -138,7 +137,7 @@ class APIScanner(BaseScanner):
 
         return str(response_data)
 
-    async def send_attack(self, attack: Attack) -> Optional[str]:
+    async def send_attack(self, attack: Attack) -> str | None:
         """Send a single attack to the API endpoint."""
         client = await self._get_client()
         payload = self._build_payload(attack)

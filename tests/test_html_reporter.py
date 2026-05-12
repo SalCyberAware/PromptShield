@@ -1,10 +1,8 @@
 """Tests for the HTML report generator."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from promptshield.models import (
     AnalyzerVerdict,
@@ -20,7 +18,6 @@ from promptshield.models import (
     Transcript,
 )
 from promptshield.reporters.html_reporter import HTMLReporter
-
 
 # Realistic-looking secret values that match SECRET_PATTERNS in json_reporter.
 # These are FAKE - they exist only to verify redaction does its job.
@@ -80,7 +77,7 @@ def _make_scan(
     transcripts: list[Transcript] | None = None,
     auth_value: str = FAKE_ANTHROPIC_KEY,
 ) -> Scan:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Scan(
         scan_id="SCAN-DEADBEEF",
         target=_make_target(auth_value=auth_value),

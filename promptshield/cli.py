@@ -9,12 +9,12 @@ import click
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
 from . import __version__
 from .attacks.library import AttackLibrary
-from .engines.api_scanner import APIScanner, APIProvider, detect_provider
+from .engines.api_scanner import APIProvider, APIScanner, detect_provider
 from .models import AttackCategory, AuthType, Severity, TargetConfig, TargetType
 from .reporters.json_reporter import JSONReporter
 
@@ -242,7 +242,7 @@ def scan(
             )
         )
 
-    console.print(f"\n[green]Scan complete![/green]")
+    console.print("\n[green]Scan complete![/green]")
     print_summary(scan_result)
 
     if verbose and scan_result.transcripts:

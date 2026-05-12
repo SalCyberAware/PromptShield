@@ -1,10 +1,6 @@
 """Tests for the API scanner (with mocked HTTP)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 from promptshield.engines.api_scanner import APIProvider, APIScanner, detect_provider
 from promptshield.models import Attack, AuthType, TargetConfig, TargetType
 
