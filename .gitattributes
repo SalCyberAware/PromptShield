@@ -1,0 +1,3 @@
+# Don't count the HTML/Jinja template against language stats on GitHub.
+# It's one template file, not 11% of the codebase.
+*.j2 linguist-detectable=false
