@@ -15,6 +15,7 @@ import httpx
 
 from ..models import Attack, AuthType, TargetConfig
 from .base import BaseScanner
+from typing import Any
 
 
 class APIProvider(str, Enum):
@@ -83,7 +84,7 @@ class APIScanner(BaseScanner):
             )
         return self._client
 
-    def _build_payload(self, attack: Attack) -> dict:
+    def _build_payload(self, attack: Attack) -> dict[str, Any]:
         """Build the request payload in the correct format for the provider."""
         if self.provider == APIProvider.ANTHROPIC:
             return {
@@ -103,7 +104,7 @@ class APIScanner(BaseScanner):
             "max_tokens": 1024,
         }
 
-    def _extract_response_text(self, response_data: dict) -> str:
+    def _extract_response_text(self, response_data: dict[str, Any]) -> str:
         """Extract assistant text from the JSON response."""
         # Anthropic native: { content: [ { type: 'text', text: '...' } ] }
         if self.provider == APIProvider.ANTHROPIC or "content" in response_data:

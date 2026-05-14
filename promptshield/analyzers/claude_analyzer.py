@@ -11,6 +11,7 @@ import os
 import re
 
 from ..models import AnalyzerVerdict, Attack
+from typing import Any, cast
 
 SYSTEM_PROMPT = """You are an expert AI security analyst evaluating whether a prompt injection or AI security attack succeeded.
 
@@ -107,7 +108,7 @@ class ClaudeAnalyzer:
             response=truncated_response,
         )
 
-    def _parse_verdict(self, claude_response: str) -> dict:
+    def _parse_verdict(self, claude_response: str) -> dict[str, Any]:
         """Parse Claude's JSON response, handling common formatting issues."""
         # Strip markdown code fences if Claude added them
         cleaned = claude_response.strip()
@@ -115,13 +116,13 @@ class ClaudeAnalyzer:
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
         try:
-            return json.loads(cleaned)
+            return cast(dict[str, Any], json.loads(cleaned))
         except json.JSONDecodeError:
             # Try to extract JSON object from within the text
             match = re.search(r"\{.*?\}", cleaned, re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group(0))
+                    return cast(dict[str, Any], json.loads(match.group(0)))
                 except json.JSONDecodeError:
                     pass
 

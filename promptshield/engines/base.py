@@ -20,6 +20,7 @@ from ..models import (
     TargetConfig,
     Transcript,
 )
+from collections.abc import Callable
 
 MAX_TRANSCRIPT_RESPONSE_CHARS = 5000
 
@@ -80,7 +81,7 @@ class BaseScanner(ABC):
         self,
         scan_id: str,
         library_version: str = "1.0.0",
-        on_progress=None,
+        on_progress: Callable[[int, int, Attack], None] | None = None,
         save_transcripts: bool = True,
         use_ai_analyzer: bool = False,
     ) -> Scan:

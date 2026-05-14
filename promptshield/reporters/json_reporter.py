@@ -74,7 +74,7 @@ class JSONReporter:
     def __init__(self, redact_secrets: bool = True) -> None:
         self.redact_secrets = redact_secrets
 
-    def _prepare(self, scan: Scan) -> dict:
+    def _prepare(self, scan: Scan) -> dict[str, Any]:
         data = scan.model_dump(mode="json")
         if self.redact_secrets:
             data = redact(copy.deepcopy(data))

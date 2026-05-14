@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
+from typing import Any
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ class Finding(BaseModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     title: str
     description: str
-    evidence: dict = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
     analyzer_verdicts: list[AnalyzerVerdict] = Field(default_factory=list)
     remediation: str
     detected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -149,7 +150,7 @@ class Scan(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     transcripts: list[Transcript] = Field(default_factory=list)
     library_version: str
-    config: dict = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     analyzers_used: list[str] = Field(default_factory=list)
 

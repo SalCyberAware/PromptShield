@@ -15,7 +15,8 @@ from rich.table import Table
 from . import __version__
 from .attacks.library import AttackLibrary
 from .engines.api_scanner import APIProvider, APIScanner, detect_provider
-from .models import AttackCategory, AuthType, Severity, TargetConfig, TargetType
+from .models import Attack, AttackCategory, AuthType, Scan, Severity, TargetConfig, TargetType
+from .reporters.html_reporter import HTMLReporter
 from .reporters.json_reporter import JSONReporter
 
 load_dotenv()
@@ -229,7 +230,7 @@ def scan(
     with progress:
         task = progress.add_task("[cyan]Scanning...", total=len(selected_attacks))
 
-        def update_progress(current: int, total: int, attack):
+        def update_progress(current: int, total: int, attack: Attack) -> None:
             progress.update(task, completed=current, description=f"[cyan]{attack.id} - {attack.name[:40]}")
 
         scan_result = asyncio.run(
@@ -251,8 +252,8 @@ def scan(
     if output:
         output_path = Path(output)
         ext = output_path.suffix.lower()
+        reporter: HTMLReporter | JSONReporter
         if ext == ".html":
-            from .reporters.html_reporter import HTMLReporter
             reporter = HTMLReporter()
         else:
             reporter = JSONReporter()
@@ -260,7 +261,7 @@ def scan(
         console.print(f"\n[green]Report saved to:[/green] {saved}")
 
 
-def print_summary(scan_result) -> None:
+def print_summary(scan_result: Scan) -> None:
     summary_table = Table(title="Scan Summary", border_style="cyan")
     summary_table.add_column("Metric", style="cyan")
     summary_table.add_column("Value", style="white")
@@ -307,7 +308,7 @@ def print_summary(scan_result) -> None:
         console.print("\n[green]No findings detected.[/green] [dim](use --verbose to see what the model said)[/dim]")
 
 
-def print_transcripts(scan_result) -> None:
+def print_transcripts(scan_result: Scan) -> None:
     """Print full request/response transcripts for inspection."""
     console.print("\n[bold cyan]=== Transcripts ===[/bold cyan]\n")
     for transcript in scan_result.transcripts:

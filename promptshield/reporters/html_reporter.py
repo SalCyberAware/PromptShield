@@ -8,6 +8,7 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 
 from ..models import Scan
 from .json_reporter import redact
+from typing import Any
 
 _TEMPLATE_NAME = "scan_report.html.j2"
 
@@ -38,7 +39,7 @@ class HTMLReporter:
             lstrip_blocks=True,
         )
 
-    def _prepare(self, scan: Scan) -> dict:
+    def _prepare(self, scan: Scan) -> dict[str, Any]:
         data = scan.model_dump(mode="json")
         if self.redact_secrets:
             data = redact(copy.deepcopy(data))

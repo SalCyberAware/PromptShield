@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from ..models import Attack, AttackCategory, Severity
+from collections.abc import Iterator
 
 
 class AttackLibrary:
@@ -93,5 +94,5 @@ class AttackLibrary:
     def __len__(self) -> int:
         return len(self.attacks)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Attack]:
         return iter(self.attacks)
