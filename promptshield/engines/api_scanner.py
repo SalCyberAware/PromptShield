@@ -24,6 +24,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from .. import __version__
 from ..models import Attack, AuthType, TargetConfig
 from .base import BaseScanner
 
@@ -91,7 +92,7 @@ class APIScanner(BaseScanner):
         """Lazy-create the HTTP client with provider-aware headers."""
         if self._client is None:
             headers = dict(self.target.headers)
-            headers.setdefault("User-Agent", self.target.user_agent or "PromptShield/0.1.0")
+            headers.setdefault("User-Agent", self.target.user_agent or f"PromptShield/{__version__}")
             headers.setdefault("Content-Type", "application/json")
 
             if self.provider == APIProvider.ANTHROPIC:
