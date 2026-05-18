@@ -6,16 +6,46 @@ Supports multiple provider formats:
 - Custom / generic (best-effort)
 
 Auto-detects format from the URL but allows manual override.
+
+Transient failures (HTTP 429, HTTP 5xx, timeouts, and network errors) are
+retried with exponential backoff. Client errors (4xx other than 429) are not
+retried, since retrying a malformed request or bad credentials never helps.
 """
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 import httpx
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..models import Attack, AuthType, TargetConfig
 from .base import BaseScanner
-from typing import Any
+
+# --- Retry policy for transient API failures -------------------------------
+# Applies to HTTP 429 (rate limit), HTTP 5xx (server errors), timeouts, and
+# network/transport errors. HTTP 4xx other than 429 is NOT retried.
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_MULTIPLIER = 2
+_RETRY_BACKOFF_MIN = 2
+_RETRY_BACKOFF_MAX = 30
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True if an exception represents a transient, retryable failure."""
+    # Timeouts and network/transport errors are transient by nature.
+    if isinstance(exc, httpx.TransportError):
+        return True
+    # HTTP errors: only rate limits (429) and server errors (5xx) are retryable.
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or 500 <= status < 600
+    return False
 
 
 class APIProvider(str, Enum):
@@ -138,14 +168,40 @@ class APIScanner(BaseScanner):
 
         return str(response_data)
 
-    async def send_attack(self, attack: Attack) -> str | None:
-        """Send a single attack to the API endpoint."""
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
+        wait=wait_exponential(
+            multiplier=_RETRY_BACKOFF_MULTIPLIER,
+            min=_RETRY_BACKOFF_MIN,
+            max=_RETRY_BACKOFF_MAX,
+        ),
+        reraise=True,
+    )
+    async def _post_attack(self, payload: dict[str, Any]) -> httpx.Response:
+        """POST a payload to the target endpoint, retrying transient failures.
+
+        Retries HTTP 429, HTTP 5xx, timeouts, and network errors with
+        exponential backoff (see the module-level retry policy constants).
+        On a non-retryable error (e.g. HTTP 401/404) or after the final
+        attempt, the original exception propagates for the caller to handle.
+        """
         client = await self._get_client()
+        response = await client.post(self.target.url, json=payload)
+        response.raise_for_status()
+        return response
+
+    async def send_attack(self, attack: Attack) -> str | None:
+        """Send a single attack to the API endpoint.
+
+        Transient failures are retried internally by ``_post_attack``. If all
+        retries are exhausted, or the failure is non-retryable, the error is
+        converted to a diagnostic string rather than raised.
+        """
         payload = self._build_payload(attack)
 
         try:
-            response = await client.post(self.target.url, json=payload)
-            response.raise_for_status()
+            response = await self._post_attack(payload)
             try:
                 data = response.json()
                 return self._extract_response_text(data)
