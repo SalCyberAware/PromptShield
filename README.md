@@ -7,7 +7,7 @@
 [![CI](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue)
-![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)
 ![Attacks](https://img.shields.io/badge/attacks-50-orange)
 ![OWASP](https://img.shields.io/badge/OWASP%20LLM-Top%2010%20Coverage-purple)
 
@@ -27,7 +27,7 @@ PromptShield is a free, open-source vulnerability scanner specifically designed 
 
 ## Status
 
-**Phase 1 complete.** PromptShield has a working CLI scanner with 50 attacks covering all 10 OWASP LLM Top 10 categories, two complementary analyzers (pattern-based + Claude AI), HTML and JSON report generators, and an 86-test pytest suite running on Python 3.11, 3.12, and 3.13.
+**Phase 1 complete.** PromptShield has a working CLI scanner with 50 attacks covering all 10 OWASP LLM Top 10 categories, two complementary analyzers (pattern-based + Claude AI), HTML and JSON report generators, and a 162-test pytest suite running on Python 3.11, 3.12, and 3.13.
 
 ---
 
@@ -69,6 +69,8 @@ Single-file, shareable, severity-coded, with collapsible transcripts:
 - **Environment-based auth**: Loads API keys from `.env` (never on the command line)
 - **MITRE ATLAS mapping**: Attacks tagged with corresponding ATLAS techniques where applicable
 - **Rich CLI** with colored output, progress bars, and structured tables
+- **Automatic retry**: transient API failures (rate limits, server errors, timeouts) are retried with exponential backoff
+- **Graceful interruption**: Ctrl+C stops a scan cleanly instead of dumping a traceback
 
 ### Planned
 
@@ -206,7 +208,7 @@ pytest tests/ -v
 pytest tests/ --cov=promptshield --cov-report=term-missing
 ```
 
-**Current status:** 86 tests passing in ~3 seconds. ~50% overall coverage with 100% on critical data models and analyzers.
+**Current status:** 162 tests passing in ~4 seconds, with 93% overall coverage.
 
 | Module | Coverage |
 |--------|----------|
@@ -216,7 +218,9 @@ pytest tests/ --cov=promptshield --cov-report=term-missing
 | `attacks/library.py` | 96% |
 | `reporters/json_reporter.py` | 96% |
 | `reporters/html_reporter.py` | 100% |
-| `engines/api_scanner.py` | 58% |
+| `engines/api_scanner.py` | 75% |
+| `engines/base.py` | 98% |
+| `cli.py` | 93% |
 
 All HTTP calls and API interactions are mocked in tests — no real API calls, no costs, no flaky network dependencies.
 
@@ -243,7 +247,7 @@ PromptShield/
 │       ├── json_reporter.py    # JSON output with secret redaction
 │       └── templates/
 │           └── scan_report.html.j2
-└── tests/                      # 86 pytest tests
+└── tests/                      # 162 pytest tests
 ```
 
 ---
