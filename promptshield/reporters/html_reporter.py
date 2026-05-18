@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 from ..models import Scan
 from .json_reporter import redact
-from typing import Any
 
 _TEMPLATE_NAME = "scan_report.html.j2"
 

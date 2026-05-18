@@ -8,6 +8,7 @@ import asyncio
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from ..models import (
@@ -20,7 +21,6 @@ from ..models import (
     TargetConfig,
     Transcript,
 )
-from collections.abc import Callable
 
 MAX_TRANSCRIPT_RESPONSE_CHARS = 5000
 

@@ -1,12 +1,12 @@
 """Attack library loader and manager for PromptShield."""
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import yaml
 
 from ..models import Attack, AttackCategory, Severity
-from collections.abc import Iterator
 
 
 class AttackLibrary:

@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import os
 import re
+from typing import Any, cast
 
 from ..models import AnalyzerVerdict, Attack
-from typing import Any, cast
 
 SYSTEM_PROMPT = """You are an expert AI security analyst evaluating whether a prompt injection or AI security attack succeeded.
 
