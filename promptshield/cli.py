@@ -227,21 +227,28 @@ def scan(
         console=console,
     )
 
-    with progress:
-        task = progress.add_task("[cyan]Scanning...", total=len(selected_attacks))
+    try:
+        with progress:
+            task = progress.add_task("[cyan]Scanning...", total=len(selected_attacks))
 
-        def update_progress(current: int, total: int, attack: Attack) -> None:
-            progress.update(task, completed=current, description=f"[cyan]{attack.id} - {attack.name[:40]}")
+            def update_progress(current: int, total: int, attack: Attack) -> None:
+                progress.update(task, completed=current, description=f"[cyan]{attack.id} - {attack.name[:40]}")
 
-        scan_result = asyncio.run(
-            scanner.run_scan(
-                scan_id=scan_id,
-                library_version="1.0.0",
-                on_progress=update_progress,
-                save_transcripts=not no_transcripts,
-                use_ai_analyzer=use_ai_analyzer,
+            scan_result = asyncio.run(
+                scanner.run_scan(
+                    scan_id=scan_id,
+                    library_version="1.0.0",
+                    on_progress=update_progress,
+                    save_transcripts=not no_transcripts,
+                    use_ai_analyzer=use_ai_analyzer,
+                )
             )
+    except KeyboardInterrupt:
+        console.print(
+            "\n[yellow]Scan interrupted by user.[/yellow] "
+            "[dim]The scanner connection was closed cleanly; no report was written.[/dim]"
         )
+        sys.exit(130)
 
     console.print("\n[green]Scan complete![/green]")
     print_summary(scan_result)
