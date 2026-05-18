@@ -442,3 +442,32 @@ class TestScanExecution:
         assert "Transcripts" in result.output
         # And the actual attack id from the transcript.
         assert "PS-LLM01-001" in result.output
+
+    def test_scan_handles_keyboard_interrupt_gracefully(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ctrl+C during a scan should exit cleanly with code 130, not a traceback."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake-test-key")
+
+        # run_scan is a plain MagicMock (never awaited): asyncio.run is mocked to
+        # raise KeyboardInterrupt, simulating the user pressing Ctrl+C mid-scan.
+        mock_scanner = MagicMock()
+        mock_scanner.run_scan = MagicMock()
+
+        with (
+            patch("promptshield.cli.APIScanner", return_value=mock_scanner),
+            patch("promptshield.cli.asyncio.run", side_effect=KeyboardInterrupt),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "scan",
+                    "--target",
+                    "https://api.anthropic.com/v1/messages",
+                    "--categories",
+                    "LLM10",
+                ],
+            )
+
+        assert result.exit_code == 130
+        assert "interrupted" in result.output.lower()
