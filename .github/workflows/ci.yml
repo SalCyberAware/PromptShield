@@ -50,7 +50,6 @@ jobs:
         run: pip install ruff
       - name: Run ruff check
         run: ruff check promptshield/ tests/ --output-format=github
-        continue-on-error: true
   typecheck:
     name: Type check with mypy (strict)
     runs-on: ubuntu-latest
