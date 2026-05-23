@@ -5,6 +5,7 @@
 *Tests AI endpoints and chatbots against the OWASP LLM Top 10, MITRE ATLAS techniques, and custom adversarial attacks.*
 
 [![CI](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/SalCyberAware/PromptShield?label=coverage&logo=codecov&logoColor=white)](https://codecov.io/gh/SalCyberAware/PromptShield)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![Tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)
