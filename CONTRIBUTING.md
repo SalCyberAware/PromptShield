@@ -76,28 +76,71 @@ To add an attack:
 ```bash
 git clone https://github.com/SalCyberAware/PromptShield.git
 cd PromptShield
+
+python -m venv .venv
+# Windows:  .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+
 pip install -e ".[dev]"
+```
+
+The `[dev]` extra pulls in `pytest`, `pytest-asyncio`, `pytest-cov`, `black`, `ruff`, and `mypy`. After install the CLI is on your `PATH` as `promptshield`:
+
+```bash
+promptshield --help
+promptshield library list                     # browse the attack library
+promptshield scan https://your-endpoint ...   # run a scan
 ```
 
 ### Development Standards
 
-- **Python version:** 3.11+ required
-- **Style:** Black formatting, Ruff linting
-- **Type hints:** Required on all new functions and methods
+- **Python version:** 3.11+ (CI runs the matrix on 3.11, 3.12, and 3.13)
+- **Style:** Black formatting, Ruff linting (`ruff` is gated in CI — see `pyproject.toml` for the rule set and per-file ignores)
+- **Type hints:** Required on all new functions and methods (mypy runs in **strict mode** on every push)
 - **Docstrings:** Required on public functions, classes, and modules
-- **Tests:** Required for new features (we use pytest)
+- **Tests:** Required for new features (we use pytest with `pytest-asyncio` and `pytest-cov`)
+
+### Running Tests
+
+```bash
+pytest tests/ -v                                                # what CI runs
+pytest tests/ --cov=promptshield --cov-report=term-missing      # with coverage
+```
+
+CI uploads `coverage.xml` to Codecov on the 3.13 matrix entry; the badge in the README links to the live report. Coverage at the time of v0.3.0 is around **93%**.
+
+### Linting and Type Checking
+
+```bash
+ruff check promptshield/ tests/    # lint (CI uses --output-format=github)
+mypy promptshield/                 # strict-mode type check
+```
+
+Both must pass on every push — the CI pipeline has three independent jobs (`test`, `lint`, `typecheck`) and all three gate `main`.
 
 ### Pull Request Process
 
 1. Fork the repository and create a feature branch (`git checkout -b feature/your-feature-name`)
 2. Make your changes following the development standards above
-3. Add or update tests as needed
+3. Add or update tests as needed — keep coverage at or above the current level
 4. Update relevant documentation (README, docs/, docstrings)
-5. Ensure all tests pass: `pytest`
-6. Ensure linting passes: `ruff check .`
-7. Commit with clear, descriptive messages following conventional commits format (e.g., `feat: add LLM07 plugin attack`, `fix: handle 401 in API scanner`, `docs: clarify .env setup`)
-8. Push to your fork and open a pull request against `main`
-9. Respond to review feedback
+5. Ensure all three checks pass locally:
+   - `pytest tests/ -v`
+   - `ruff check promptshield/ tests/`
+   - `mypy promptshield/`
+6. Commit using [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): description`. Types in active use: `feat`, `fix`, `test`, `docs`, `refactor`, `ci`, `chore`, `style`.
+
+   Recent examples from `git log`:
+
+   ```
+   feat(engines): add tenacity retry/backoff to API scanner
+   test(cli): add 25 tests for Click CLI using CliRunner
+   style(types): enable mypy strict mode (16 annotation fixes)
+   ci: fail the run when ruff finds issues
+   ```
+
+7. Push to your fork and open a pull request against `main`
+8. Respond to review feedback — the three CI jobs (`test`, `lint`, `typecheck`) must be green before merge
 
 PRs should be focused — one logical change per PR. If you're tackling something large, open an issue first to discuss the approach.
 

@@ -8,58 +8,76 @@ PromptShield is a security tool, and we take its own security posture seriously.
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in PromptShield itself, please report it privately via one of these channels:
-
-- **Email:** Sal_CyberAware@proton.me
-- **GitHub Security Advisory:** Use GitHub's private vulnerability reporting feature on the [PromptShield repository](https://github.com/SalCyberAware/PromptShield/security/advisories/new)
+If you discover a security vulnerability in PromptShield itself, please report it privately via **[GitHub Security Advisories](https://github.com/SalCyberAware/PromptShield/security/advisories/new)** — do not open a public issue, and do not include exploit details in a PR description.
 
 When reporting, please include:
 
-- Description of the vulnerability
-- Steps to reproduce
-- Affected versions
-- Potential impact
-- Suggested fix if known
+- A clear description of the issue and its impact
+- Reproduction steps or a minimal proof of concept
+- Affected commit SHA, branch, or release tag
+- The exact PromptShield invocation (CLI flags, target type) that triggered it
+- Any relevant logs, scanner output, or screenshots
 
-We commit to:
+This is a single-maintainer project, so response times are best-effort, not contractual:
 
-- Acknowledging your report within 72 hours
-- Providing an initial assessment within 7 days
-- Keeping you informed of remediation progress
-- Crediting you in the fix advisory unless you prefer to remain anonymous
+- **Initial acknowledgement:** within 5 business days
+- **Triage and severity assessment:** within 10 business days of acknowledgement
+- **Fix and disclosure:** depends on severity; you'll be kept in the loop, and you'll be credited in the advisory unless you prefer to remain anonymous
+
+If you don't hear back within 5 business days, please ping the advisory thread.
 
 ---
 
 ## Supported Versions
 
-PromptShield is in active early development. Security fixes are applied to the latest released version on the main branch.
+PromptShield is pre-1.0. Security fixes are applied to the latest release on `main`; older tagged versions are not maintained.
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| `main` / latest tagged release (currently 0.3.x) | ✅ |
+| Tagged releases prior to the latest | ❌ |
 
-Older alpha versions are not supported. Users should always run the latest version.
+Users should always run the latest release.
 
 ---
 
-## Scope
+## In Scope
 
-The following are in scope for vulnerability reports:
+Because PromptShield is itself a security tool, the scope is more specific than for a typical application. The following are in scope:
 
-**In scope:**
+### Detection bypass
 
-- Vulnerabilities in PromptShield's own code (CLI, scanner engine, analyzers, reporters)
-- Issues that could leak user secrets (API keys, scan data)
-- Authentication bypass or privilege escalation in PromptShield
-- Vulnerabilities in PromptShield's dependencies that affect users
-- Issues that could cause PromptShield to behave unsafely against unintended targets
+- **Novel prompt-injection payloads** that evade PromptShield's analyzers (pattern + Claude AI ensemble) with a working **proof of concept** demonstrating the bypass against the current `main`
+- **Evasion techniques** that defeat the confidence-weighted voting (e.g., causing both analyzers to mis-classify a malicious payload as clean)
 
-**Out of scope:**
+### False-negative reports
 
-- Vulnerabilities in the targets PromptShield scans (those should be reported to the target's vendor)
-- Issues in third-party AI providers (Anthropic, OpenAI, etc.) — report those to the provider
-- Theoretical attacks without a clear exploitation path
-- Issues that require physical access to the user's machine
+- **Known-bad payloads** — particularly those from public sources (cite the paper, OWASP LLM Top 10 entry, MITRE ATLAS technique, or blog post) — that PromptShield's attack library or analyzers fail to flag
+- Gaps in OWASP LLM Top 10 / MITRE ATLAS coverage where a category is claimed but no working attack exists for it
+
+### Safety issues in the scanner itself
+
+- **Regular-expression denial of service** (catastrophic backtracking) on crafted scanner input or crafted target responses
+- **Code injection** via the input parser, attack-library YAML loader, report templates, or CLI argument handling
+- **Information disclosure** via error messages — leaking absolute file paths, environment variables, `.env` contents, API keys, or other secrets into terminal output, JSON reports, HTML reports, or stack traces
+- **Insecure file handling** — path traversal, arbitrary write, or zip-slip-style issues when reading attacks/data or writing reports
+- **TLS / transport issues** in the API scanner (e.g., the User-Agent or auth header leaking via misconfigured retries/redirects)
+- **Supply chain issues** — known-exploitable vulnerabilities in the pinned dependencies (`click`, `httpx`, `tenacity`, `anthropic`, `openai`, `playwright`, `jinja2`, `pyyaml`, `cryptography`, etc.) with a working exploit against PromptShield's usage
+
+---
+
+## Out of Scope
+
+- **False positives** (clean prompts flagged as vulnerable) — these are detection-accuracy bugs / feature requests, not security issues. Open a regular issue with the prompt and the analyzer that fired.
+- **Performance / DoS on local CLI runs** against a target you control — PromptShield is a local CLI; if your scan hangs or spikes CPU on a target you control, that's a performance bug
+- **Reports from automated scanners** with no manual validation or proof of exploitability
+- **Theoretical issues** without a working exploit against PromptShield's current code
+- **Vulnerabilities in the targets PromptShield scans** — those belong with the target's vendor, not here
+- **Issues in third-party AI providers** (Anthropic, OpenAI, Ollama, etc.) — report those to the provider
+- **Issues that require pre-existing privileged access** to the user's machine (root, write access to `site-packages`, etc.)
+- **Outdated dependency reports** with no exploit demonstrated against PromptShield's actual code paths
+
+This is a local CLI tool, not a hosted service, so there's no public demo to safe-harbor — testing against your own clone is always fine.
 
 ---
 
@@ -155,4 +173,4 @@ PromptShield's security architecture aligns with:
 
 This security policy may be updated as PromptShield matures. Material changes will be announced in the project changelog.
 
-Last updated: May 2026
+Last updated: 2026-05-27
