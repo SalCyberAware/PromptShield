@@ -320,6 +320,186 @@ class TestRunScanAnalyzerWiring:
         assert any("Claude API blew up" in err for err in scanner.errors)
 
 
+def _mock_ai_analyzer(name: str, verdict: AnalyzerVerdict | None = None,
+                      side_effect: BaseException | None = None) -> MagicMock:
+    """Build a MagicMock that quacks like an AI analyzer instance.
+
+    Either ``verdict`` is returned from ``analyze()``, or ``side_effect`` is
+    raised. The ``name`` attribute is set so the orchestrator can read it for
+    error messages and ``analyzers_used`` tracking.
+    """
+    instance = MagicMock()
+    instance.name = name
+    if side_effect is not None:
+        instance.analyze = AsyncMock(side_effect=side_effect)
+    else:
+        instance.analyze = AsyncMock(return_value=verdict)
+    return instance
+
+
+class TestRunScanAIFallbackChain:
+    """Claude → OpenAI cascading-fallback behavior at the orchestration layer."""
+
+    async def test_claude_succeeds_openai_never_called(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Happy path: primary analyzer wins, fallback stays untouched."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude_verdict = AnalyzerVerdict(
+            analyzer_name="claude_analyzer",
+            success=True,
+            confidence_score=0.92,
+            reasoning="Claude detected leak.",
+        )
+        claude = _mock_ai_analyzer("claude_analyzer", verdict=claude_verdict)
+        openai = _mock_ai_analyzer(
+            "openai_analyzer",
+            verdict=AnalyzerVerdict(
+                analyzer_name="openai_analyzer",
+                success=False,
+                confidence_score=0.5,
+                reasoning="(unused)",
+            ),
+        )
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        claude.analyze.assert_awaited_once()
+        openai.analyze.assert_not_awaited()
+        assert "claude_analyzer" in scan.analyzers_used
+        assert "openai_analyzer" not in scan.analyzers_used
+
+    async def test_claude_raises_falls_back_to_openai(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Primary raises, fallback succeeds, fallback's verdict is recorded."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude API blew up")
+        )
+        openai_verdict = AnalyzerVerdict(
+            analyzer_name="openai_analyzer",
+            success=True,
+            confidence_score=0.88,
+            reasoning="GPT confirmed credential leak.",
+        )
+        openai = _mock_ai_analyzer("openai_analyzer", verdict=openai_verdict)
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        claude.analyze.assert_awaited_once()
+        openai.analyze.assert_awaited_once()
+        assert any("Claude API blew up" in err for err in scanner.errors)
+        assert "openai_analyzer" in scan.analyzers_used
+        # Claude never produced a verdict, so it isn't listed as actually used.
+        assert "claude_analyzer" not in scan.analyzers_used
+        # The OpenAI verdict made it into the finding's analyzer_verdicts list.
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert "openai_analyzer" in verdict_names
+
+    async def test_claude_returns_error_verdict_falls_back_to_openai(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """0.0-confidence verdict (auth/network/parse failure) triggers fallback."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude_error_verdict = AnalyzerVerdict(
+            analyzer_name="claude_analyzer",
+            success=False,
+            confidence_score=0.0,
+            reasoning="Analyzer error: 401 Unauthorized",
+        )
+        claude = _mock_ai_analyzer("claude_analyzer", verdict=claude_error_verdict)
+        openai_verdict = AnalyzerVerdict(
+            analyzer_name="openai_analyzer",
+            success=True,
+            confidence_score=0.81,
+            reasoning="GPT picked it up.",
+        )
+        openai = _mock_ai_analyzer("openai_analyzer", verdict=openai_verdict)
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        claude.analyze.assert_awaited_once()
+        openai.analyze.assert_awaited_once()
+        assert any(
+            "claude_analyzer returned error verdict" in err for err in scanner.errors
+        )
+        assert "openai_analyzer" in scan.analyzers_used
+
+    async def test_both_ai_analyzers_fail_pattern_only_result(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """When primary AND fallback fail, the scan continues pattern-only."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude blew up")
+        )
+        openai = _mock_ai_analyzer(
+            "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
+        )
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        assert scan.status == ScanStatus.COMPLETED
+        assert any("Claude blew up" in err for err in scanner.errors)
+        assert any("OpenAI blew up too" in err for err in scanner.errors)
+        # Neither AI analyzer produced a verdict, so neither appears.
+        assert scan.analyzers_used == ["pattern_analyzer"]
+        # The pattern analyzer still detected the attack on its own.
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert verdict_names == {"pattern_analyzer"}
+
+    async def test_claude_init_fails_openai_promoted_to_primary(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """If Claude's __init__ raises, OpenAI is promoted to primary AI analyzer."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        openai_verdict = AnalyzerVerdict(
+            analyzer_name="openai_analyzer",
+            success=True,
+            confidence_score=0.79,
+            reasoning="GPT verdict.",
+        )
+        openai = _mock_ai_analyzer("openai_analyzer", verdict=openai_verdict)
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer",
+            side_effect=ValueError("no Anthropic key"),
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        openai.analyze.assert_awaited_once()
+        assert any(
+            "AI analyzer disabled (claude_analyzer)" in err for err in scanner.errors
+        )
+        assert "openai_analyzer" in scan.analyzers_used
+        assert "claude_analyzer" not in scan.analyzers_used
+
+
 class TestRunScanFindings:
     """When findings are and aren't created, and what they contain."""
 

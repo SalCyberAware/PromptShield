@@ -13,6 +13,24 @@ from promptshield.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_provider_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip provider API keys from the test environment by default.
+
+    Tests that need a key set must call ``monkeypatch.setenv`` explicitly.
+    This prevents a developer's real ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``
+    from making the orchestrator instantiate a real client during tests that
+    rely on analyzer init failing.
+    """
+    for var in (
+        "ANTHROPIC_API_KEY",
+        "PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY",
+        "OPENAI_API_KEY",
+        "PROMPTSHIELD_ANALYZER_OPENAI_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def sample_attack_llm01() -> Attack:
     """Sample LLM01 prompt injection attack."""

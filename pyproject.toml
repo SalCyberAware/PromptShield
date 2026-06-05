@@ -95,6 +95,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "promptshield/cli.py" = ["E501"]                        # banner ASCII art is intentionally wide
 "promptshield/analyzers/claude_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to Claude
+"promptshield/analyzers/openai_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to GPT
 "promptshield/analyzers/pattern.py" = ["E501"]          # detection-reasoning f-string
 "promptshield/engines/base.py" = ["E501"]               # verdict-combining expressions
 "tests/*.py" = ["E501"]                                 # long method signatures with type hints
