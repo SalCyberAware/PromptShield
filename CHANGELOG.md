@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 
 - CI uploads `coverage.xml` to Codecov on the 3.13 matrix entry; coverage badge added to the README.
+- OpenAI analyzer (GPT-4o-mini) with cascading fallback. If the primary analyzer fails (auth error, network error, parse error, or returns a 0.0-confidence internal-error verdict), the orchestrator transparently falls back to the secondary analyzer. Default chain: Claude → GPT-4o-mini → pattern-only.
 
 ### Changed
 
