@@ -28,7 +28,7 @@ PromptShield is a free, open-source vulnerability scanner specifically designed 
 
 ## Status
 
-**Phase 1 complete.** PromptShield has a working CLI scanner with 50 attacks covering all 10 OWASP LLM Top 10 categories, two complementary analyzers (pattern-based + Claude AI), HTML and JSON report generators, and a 162-test pytest suite running on Python 3.11, 3.12, and 3.13.
+**Phase 1 complete.** PromptShield has a working CLI scanner with 50 attacks covering all 10 OWASP LLM Top 10 categories, **five-layer detection — pattern matching plus a 4-tier AI cascade (Claude → GPT-4o-mini → Gemini → Ollama) with automatic fallback**, HTML and JSON report generators, and a 229-test pytest suite running on Python 3.11, 3.12, and 3.13.
 
 ---
 
@@ -48,7 +48,7 @@ Single-file, shareable, severity-coded, with collapsible transcripts:
 
 ## Roadmap
 
-- ✅ **Phase 1** (complete): Core CLI scanner with 50-attack OWASP LLM Top 10 library, multi-analyzer engine (Claude + GPT-4o-mini ensemble with cascading fallback), HTML/JSON reporting, pytest suite
+- ✅ **Phase 1** (complete): Core CLI scanner with 50-attack OWASP LLM Top 10 library, pattern + 4-tier AI analyzer cascade (Claude → GPT-4o-mini → Gemini → Ollama) with automatic fallback, HTML/JSON reporting, pytest suite
 - 🚧 **Phase 2** (next): Web application scanner via Playwright
 - 📋 **Phase 4**: Web UI + advanced reporting (PDF / SARIF)
 - 📋 **Phase 5**: Research paper and empirical study of public AI applications
@@ -60,9 +60,9 @@ Single-file, shareable, severity-coded, with collapsible transcripts:
 ### Working Today
 
 - **50 attacks** covering all 10 OWASP LLM Top 10 categories
-- **Multi-analyzer engine**: Pattern-based + Claude AI analyzers with confidence-weighted voting
-- **OpenAI GPT-4o-mini analyzer with Claude→GPT cascading fallback**: secondary AI analyzer that runs when Claude is unavailable or returns an internal-error verdict
-- **Multi-provider support**: Auto-detects Anthropic and OpenAI APIs
+- **Five-layer detection**: pattern matching + 4-tier AI analyzer cascade (Claude → GPT-4o-mini → Gemini → Ollama) with automatic fallback. Configure only the providers you have keys for; the orchestrator skips analyzers that fail to initialize and walks the list until one returns a non-error verdict. Pattern matching always runs as a deterministic floor
+- **Confidence-weighted voting** between the pattern analyzer and the winning AI verdict, with disagreement flagged for human review
+- **Multi-provider scan targets**: Auto-detects Anthropic and OpenAI API endpoints to attack
 - **HTML reports**: shareable single-file output with severity-coded layout, summary cards, and collapsible transcripts
 - **JSON reports**: machine-readable output with the same data, suitable for pipelines and SIEMs
 - **Verbose mode**: Inspect full prompt/response transcripts for research
@@ -79,6 +79,31 @@ Single-file, shareable, severity-coded, with collapsible transcripts:
 - PDF / SARIF report formats
 - Web UI dashboard
 - GitHub Actions SARIF integration
+
+---
+
+## How PromptShield compares
+
+PromptShield is a CLI-first LLM red-team scanner with attack library aligned to OWASP LLM Top 10 + MITRE ATLAS, and a **4-tier AI analyzer cascade with automatic fallback**: if Anthropic Claude is unavailable, the orchestrator tries OpenAI GPT-4o-mini; if that fails, Google Gemini; if that fails, local Ollama. If all four AI analyzers fail, deterministic pattern matching still runs as the floor. This redundancy is a real architectural differentiator — none of the major open-source competitors ship multi-provider AI fallback today.
+
+Honest comparison:
+
+| Tool | Category | Cost | Strengths | Where PromptShield differs |
+|------|----------|------|-----------|--------------------------|
+| Garak (NVIDIA) | LLM probe framework | Free | Large probe catalog, mature plugin system, many model backends | Garak runs against one AI backend you configure; PromptShield ships a 4-provider cascade by default with automatic fallback. Garak is broader in attack coverage; PromptShield is more resilient in production CI |
+| PyRIT (Microsoft) | Python risk identification toolkit | Free | Strong backing, agentic multi-turn chains, broad coverage | Single-provider analyzer model. PromptShield's cascade + simpler CLI-first UX is the trade |
+| OWASP llm-guard / Rebuff | Prompt injection PREVENTION libraries | Free | Designed as runtime defensive layer | Different category — PromptShield is offensive (find bypasses), these are defensive (block at runtime). They're complementary |
+| Manual prompt testing | What most teams default to | Free, burns analyst time | Full flexibility | Reproducible, framework-aligned, no notebook drift across sprints |
+
+### When to use what
+
+- **Use Garak or PyRIT** when you need breadth — hundreds of probes, multi-turn agent attacks, custom plugin authoring.
+- **Use OWASP llm-guard / Rebuff** for runtime defense (different category entirely).
+- **Use PromptShield** when you want CLI-first scans with framework alignment AND multi-provider redundancy. The cascade matters most in CI/CD: you can't have your security scan fail because Anthropic had a 3-minute outage.
+
+### A note on the cascade
+
+The 4-tier cascade is opt-in by environment variables — configure only the provider keys you have, and the orchestrator skips analyzers that fail to initialize. Pattern matching always runs as a deterministic floor. To add a fifth provider, see [CONTRIBUTING.md](CONTRIBUTING.md) — the orchestrator is list-based so adding a provider is a one-line change.
 
 ---
 
@@ -258,7 +283,7 @@ PromptShield/
 - **CLI:** Click + Rich
 - **API Scanning:** httpx (async)
 - **Web Scanning (Phase 2):** Playwright
-- **AI Analyzers:** Anthropic Claude (working), OpenAI GPT-4o-mini (working)
+- **AI Analyzers:** Anthropic Claude, OpenAI GPT-4o-mini, Google Gemini, and local Ollama — all working, ordered as a cascading fallback chain
 - **Reporting:** JSON (stdlib) + HTML (Jinja2)
 - **Web Framework (Phase 4):** FastAPI + React/Vite
 - **Data Models:** Pydantic v2

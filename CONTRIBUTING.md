@@ -69,6 +69,26 @@ To add an attack:
 
 ---
 
+## Adding a New AI Analyzer
+
+PromptShield ships with a 4-tier AI analyzer cascade (Claude → GPT-4o-mini → Gemini → Ollama → pattern-only floor). Adding a fifth provider is intentionally easy because the orchestrator iterates an ordered list of analyzers and stops at the first one that returns a non-error verdict.
+
+Every analyzer follows the same public contract:
+
+- **Constructor**: `__init__(self, api_key: str | None = None, model: str | None = None, max_response_chars: int = 3000)`. Key precedence is explicit arg → `PROMPTSHIELD_ANALYZER_<NAME>_KEY` → the provider's own conventional env var (e.g. `OPENAI_API_KEY`, `GOOGLE_API_KEY`). Raise `ValueError` if no key is configured and `ImportError` if the SDK isn't installed — the orchestrator catches both and logs `"AI analyzer disabled (<name>)"` to `scan.errors`.
+- **`async def analyze(self, attack: Attack, response: str) -> AnalyzerVerdict`**: returns `AnalyzerVerdict(analyzer_name=self.name, success=..., confidence_score=..., reasoning=..., raw_response=...)`. The shape is non-negotiable; the orchestrator's voting logic depends on it.
+- **Swallow-and-return-error semantics**: `analyze()` MUST NOT raise. Wrap your SDK calls in `try/except Exception` and convert any failure (auth, network, parse, daemon-not-running) into a 0.0-confidence verdict with `reasoning="Analyzer error: ..."`. The orchestrator treats both raised exceptions AND 0.0-confidence verdicts as "this analyzer failed, try the next." If you raise, you break the cascade.
+
+To add a fifth provider:
+
+1. Create `promptshield/analyzers/yourprovider_analyzer.py` mirroring `ollama_analyzer.py` (the closest template — it's the most recent and has the cleanest error-handling pattern). Reuse the `SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE`, and `_parse_verdict` helpers verbatim; only the SDK-specific bits in `__init__` and the API call inside `analyze` need to change.
+2. Add the new class to `promptshield/analyzers/__init__.py` imports and `__all__`.
+3. Append one `try/except (ValueError, ImportError)` block to `_instantiate_ai_analyzers` in `promptshield/engines/base.py`, in the priority order you want. That's it — no changes to `_run_ai_with_cascade` or `_try_analyze` are needed.
+
+Mirror the test pattern in `tests/test_ollama_analyzer.py` for the new analyzer, and add a cascade test to `tests/test_base_engine.py` covering the case where every analyzer above yours fails and yours wins. Also extend the autouse env-clearing fixture in `tests/conftest.py` with your provider's env vars so tests stay deterministic on dev machines.
+
+---
+
 ## Code Contributions
 
 ### Setup
