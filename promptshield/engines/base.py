@@ -91,7 +91,7 @@ class BaseScanner(ABC):
 
         pattern_analyzer = PatternAnalyzer()
         analyzers_used: list[str] = ["pattern_analyzer"]
-        primary_ai_analyzer, fallback_ai_analyzer = self._instantiate_ai_analyzers(use_ai_analyzer)
+        ai_cascade = self._instantiate_ai_analyzers(use_ai_analyzer)
 
         scan = Scan(
             scan_id=scan_id,
@@ -124,14 +124,14 @@ class BaseScanner(ABC):
                         verdicts.append(pattern_verdict)
                         analyzers_run_for_attack.append("pattern_analyzer")
 
-                        # AI analyzer: try primary (Claude); on raised exception or
-                        # 0.0-confidence "internal failure" verdict, fall back to
-                        # the secondary analyzer (OpenAI). At most one AI verdict
-                        # is appended, preserving the _combine_verdicts contract.
-                        if primary_ai_analyzer is not None:
-                            ai_verdict = await self._run_ai_with_fallback(
-                                primary_ai_analyzer,
-                                fallback_ai_analyzer,
+                        # AI analyzer cascade: walk the configured analyzers in
+                        # priority order. On raised exception or 0.0-confidence
+                        # "internal failure" verdict, move on to the next one.
+                        # At most one AI verdict is appended per attack, preserving
+                        # the _combine_verdicts contract.
+                        if ai_cascade:
+                            ai_verdict = await self._run_ai_with_cascade(
+                                ai_cascade,
                                 attack,
                                 response,
                             )
@@ -212,75 +212,69 @@ class BaseScanner(ABC):
 
         return scan
 
-    def _instantiate_ai_analyzers(
-        self, use_ai_analyzer: bool
-    ) -> tuple[Any | None, Any | None]:
-        """Return ``(primary, fallback)`` AI analyzer instances.
+    def _instantiate_ai_analyzers(self, use_ai_analyzer: bool) -> list[Any]:
+        """Return AI analyzer instances in priority order.
 
-        Claude is the primary AI analyzer; OpenAI is the fallback. If Claude's
-        init fails (missing key, missing SDK), OpenAI is promoted to primary so
-        the scan still gets AI-quality verdicts when possible. Init failures are
-        recorded to ``self.errors`` with the substring ``"AI analyzer disabled"``
-        so external monitors can grep for it.
+        Default cascade is Claude → OpenAI → Gemini. Each analyzer is
+        instantiated independently; an analyzer whose ``__init__`` raises
+        ``ValueError`` (missing key) or ``ImportError`` (missing SDK) is skipped
+        and logged to ``self.errors`` with the substring
+        ``"AI analyzer disabled"`` so external monitors can grep for it.
+        Analyzers whose init succeeds are kept in priority order so the cascade
+        always tries the highest-priority working one first.
         """
         if not use_ai_analyzer:
-            return None, None
+            return []
 
-        primary: Any | None = None
+        analyzers: list[Any] = []
+
         try:
             from ..analyzers.claude_analyzer import ClaudeAnalyzer
-            primary = ClaudeAnalyzer()
+            analyzers.append(ClaudeAnalyzer())
         except (ValueError, ImportError) as exc:
             self.errors.append(f"AI analyzer disabled (claude_analyzer): {exc}")
 
-        fallback: Any | None = None
         try:
             from ..analyzers.openai_analyzer import OpenAIAnalyzer
-            fallback = OpenAIAnalyzer()
+            analyzers.append(OpenAIAnalyzer())
         except (ValueError, ImportError) as exc:
             self.errors.append(f"AI analyzer disabled (openai_analyzer): {exc}")
 
-        if primary is None and fallback is not None:
-            # Claude unavailable — promote OpenAI to primary so the cascade has
-            # somewhere to start. There is no further fallback in that case.
-            primary, fallback = fallback, None
+        try:
+            from ..analyzers.gemini_analyzer import GeminiAnalyzer
+            analyzers.append(GeminiAnalyzer())
+        except (ValueError, ImportError) as exc:
+            self.errors.append(f"AI analyzer disabled (gemini_analyzer): {exc}")
 
-        return primary, fallback
+        return analyzers
 
-    async def _run_ai_with_fallback(
+    async def _run_ai_with_cascade(
         self,
-        primary: Any,
-        fallback: Any | None,
+        analyzers: list[Any],
         attack: Attack,
         response: str,
     ) -> AnalyzerVerdict | None:
-        """Run the primary AI analyzer; on failure, try the fallback.
+        """Walk the analyzer cascade until one produces a usable verdict.
 
-        Treats two outcomes as "primary failed":
+        Treats two outcomes as "this analyzer failed, try the next":
           1. ``analyze`` raises an exception, or
           2. ``analyze`` returns a 0.0-confidence verdict (the analyzer's
              internal-error sentinel — auth, network, parse failure).
 
-        Returns the first usable verdict, or ``None`` if both analyzers
-        failed. Errors are appended to ``self.errors``.
+        Returns the first usable verdict, or ``None`` if every analyzer in the
+        cascade failed. Per-analyzer failures are appended to ``self.errors``.
         """
-        primary_verdict = await self._try_analyze(primary, attack, response)
-        if primary_verdict is not None and primary_verdict.confidence_score > 0.0:
-            return primary_verdict
-
-        if primary_verdict is not None:
+        for analyzer in analyzers:
+            verdict = await self._try_analyze(analyzer, attack, response)
+            if verdict is None:
+                continue
+            if verdict.confidence_score > 0.0:
+                return verdict
             self.errors.append(
-                f"{primary.name} returned error verdict for {attack.id}: "
-                f"{(primary_verdict.reasoning or '')[:200]}"
+                f"{analyzer.name} returned error verdict for {attack.id}: "
+                f"{(verdict.reasoning or '')[:200]}"
             )
-
-        if fallback is None:
-            return primary_verdict
-
-        fallback_verdict = await self._try_analyze(fallback, attack, response)
-        if fallback_verdict is not None:
-            return fallback_verdict
-        return primary_verdict
+        return None
 
     async def _try_analyze(
         self, analyzer: Any, attack: Attack, response: str

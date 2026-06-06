@@ -499,6 +499,80 @@ class TestRunScanAIFallbackChain:
         assert "openai_analyzer" in scan.analyzers_used
         assert "claude_analyzer" not in scan.analyzers_used
 
+    async def test_claude_and_openai_fail_gemini_succeeds(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Third-tier fallback: both upstream analyzers fail, Gemini takes over."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude blew up")
+        )
+        openai = _mock_ai_analyzer(
+            "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
+        )
+        gemini_verdict = AnalyzerVerdict(
+            analyzer_name="gemini_analyzer",
+            success=True,
+            confidence_score=0.74,
+            reasoning="Gemini caught the credential leak.",
+        )
+        gemini = _mock_ai_analyzer("gemini_analyzer", verdict=gemini_verdict)
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ), patch(
+            "promptshield.analyzers.gemini_analyzer.GeminiAnalyzer", return_value=gemini
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        claude.analyze.assert_awaited_once()
+        openai.analyze.assert_awaited_once()
+        gemini.analyze.assert_awaited_once()
+        assert any("Claude blew up" in err for err in scanner.errors)
+        assert any("OpenAI blew up too" in err for err in scanner.errors)
+        assert "gemini_analyzer" in scan.analyzers_used
+        assert "claude_analyzer" not in scan.analyzers_used
+        assert "openai_analyzer" not in scan.analyzers_used
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert "gemini_analyzer" in verdict_names
+
+    async def test_all_three_ai_analyzers_fail_pattern_only_result(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """When the entire cascade fails, the scan continues pattern-only."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude blew up")
+        )
+        openai = _mock_ai_analyzer(
+            "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
+        )
+        gemini = _mock_ai_analyzer(
+            "gemini_analyzer", side_effect=RuntimeError("Gemini blew up three")
+        )
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ), patch(
+            "promptshield.analyzers.gemini_analyzer.GeminiAnalyzer", return_value=gemini
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        assert scan.status == ScanStatus.COMPLETED
+        assert any("Claude blew up" in err for err in scanner.errors)
+        assert any("OpenAI blew up too" in err for err in scanner.errors)
+        assert any("Gemini blew up three" in err for err in scanner.errors)
+        # None of the AI analyzers produced a verdict.
+        assert scan.analyzers_used == ["pattern_analyzer"]
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert verdict_names == {"pattern_analyzer"}
+
 
 class TestRunScanFindings:
     """When findings are and aren't created, and what they contain."""
