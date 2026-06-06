@@ -573,6 +573,93 @@ class TestRunScanAIFallbackChain:
         verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
         assert verdict_names == {"pattern_analyzer"}
 
+    async def test_claude_openai_gemini_fail_ollama_succeeds(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Fourth-tier fallback: the three commercial providers all fail, Ollama takes over."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude blew up")
+        )
+        openai = _mock_ai_analyzer(
+            "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
+        )
+        gemini = _mock_ai_analyzer(
+            "gemini_analyzer", side_effect=RuntimeError("Gemini blew up three")
+        )
+        ollama_verdict = AnalyzerVerdict(
+            analyzer_name="ollama_analyzer",
+            success=True,
+            confidence_score=0.66,
+            reasoning="Local llama caught the credential leak.",
+        )
+        ollama = _mock_ai_analyzer("ollama_analyzer", verdict=ollama_verdict)
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ), patch(
+            "promptshield.analyzers.gemini_analyzer.GeminiAnalyzer", return_value=gemini
+        ), patch(
+            "promptshield.analyzers.ollama_analyzer.OllamaAnalyzer", return_value=ollama
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        claude.analyze.assert_awaited_once()
+        openai.analyze.assert_awaited_once()
+        gemini.analyze.assert_awaited_once()
+        ollama.analyze.assert_awaited_once()
+        assert any("Claude blew up" in err for err in scanner.errors)
+        assert any("OpenAI blew up too" in err for err in scanner.errors)
+        assert any("Gemini blew up three" in err for err in scanner.errors)
+        assert "ollama_analyzer" in scan.analyzers_used
+        assert "claude_analyzer" not in scan.analyzers_used
+        assert "openai_analyzer" not in scan.analyzers_used
+        assert "gemini_analyzer" not in scan.analyzers_used
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert "ollama_analyzer" in verdict_names
+
+    async def test_all_four_ai_analyzers_fail_pattern_only_result(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """When the full 4-tier cascade fails, the scan continues pattern-only."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("Claude blew up")
+        )
+        openai = _mock_ai_analyzer(
+            "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
+        )
+        gemini = _mock_ai_analyzer(
+            "gemini_analyzer", side_effect=RuntimeError("Gemini blew up three")
+        )
+        ollama = _mock_ai_analyzer(
+            "ollama_analyzer", side_effect=RuntimeError("Ollama daemon unreachable")
+        )
+
+        with patch(
+            "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
+        ), patch(
+            "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ), patch(
+            "promptshield.analyzers.gemini_analyzer.GeminiAnalyzer", return_value=gemini
+        ), patch(
+            "promptshield.analyzers.ollama_analyzer.OllamaAnalyzer", return_value=ollama
+        ):
+            scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
+
+        assert scan.status == ScanStatus.COMPLETED
+        assert any("Claude blew up" in err for err in scanner.errors)
+        assert any("OpenAI blew up too" in err for err in scanner.errors)
+        assert any("Gemini blew up three" in err for err in scanner.errors)
+        assert any("Ollama daemon unreachable" in err for err in scanner.errors)
+        assert scan.analyzers_used == ["pattern_analyzer"]
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert verdict_names == {"pattern_analyzer"}
+
 
 class TestRunScanFindings:
     """When findings are and aren't created, and what they contain."""

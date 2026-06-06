@@ -34,6 +34,7 @@ dependencies = [
     "anthropic>=0.39.0",
     "openai>=1.50.0",
     "google-genai>=1.0.0",
+    "ollama>=0.3.0",
     "playwright>=1.45.0",
     "jinja2>=3.1.4",
     "pyyaml>=6.0.1",
@@ -49,9 +50,6 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
-]
-local-llm = [
-    "ollama>=0.3.0",
 ]
 pdf = [
     "weasyprint>=62.0",
@@ -98,6 +96,7 @@ ignore = [
 "promptshield/analyzers/claude_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to Claude
 "promptshield/analyzers/openai_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to GPT
 "promptshield/analyzers/gemini_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to Gemini
+"promptshield/analyzers/ollama_analyzer.py" = ["E501"]  # system-prompt strings sent verbatim to local LLM
 "promptshield/analyzers/pattern.py" = ["E501"]          # detection-reasoning f-string
 "promptshield/engines/base.py" = ["E501"]               # verdict-combining expressions
 "tests/*.py" = ["E501"]                                 # long method signatures with type hints

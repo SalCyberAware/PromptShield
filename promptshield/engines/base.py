@@ -215,7 +215,7 @@ class BaseScanner(ABC):
     def _instantiate_ai_analyzers(self, use_ai_analyzer: bool) -> list[Any]:
         """Return AI analyzer instances in priority order.
 
-        Default cascade is Claude → OpenAI → Gemini. Each analyzer is
+        Default cascade is Claude → OpenAI → Gemini → Ollama. Each analyzer is
         instantiated independently; an analyzer whose ``__init__`` raises
         ``ValueError`` (missing key) or ``ImportError`` (missing SDK) is skipped
         and logged to ``self.errors`` with the substring
@@ -245,6 +245,12 @@ class BaseScanner(ABC):
             analyzers.append(GeminiAnalyzer())
         except (ValueError, ImportError) as exc:
             self.errors.append(f"AI analyzer disabled (gemini_analyzer): {exc}")
+
+        try:
+            from ..analyzers.ollama_analyzer import OllamaAnalyzer
+            analyzers.append(OllamaAnalyzer())
+        except (ValueError, ImportError) as exc:
+            self.errors.append(f"AI analyzer disabled (ollama_analyzer): {exc}")
 
         return analyzers
 

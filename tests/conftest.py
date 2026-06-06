@@ -31,6 +31,9 @@ def _clear_provider_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
         "GOOGLE_GENAI_API_KEY",
         "PROMPTSHIELD_ANALYZER_GEMINI_KEY",
         "PROMPTSHIELD_ANALYZER_GEMINI_MODEL",
+        "OLLAMA_HOST",
+        "PROMPTSHIELD_ANALYZER_OLLAMA_HOST",
+        "PROMPTSHIELD_ANALYZER_OLLAMA_MODEL",
     ):
         monkeypatch.delenv(var, raising=False)
 
