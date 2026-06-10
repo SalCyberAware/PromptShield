@@ -27,6 +27,8 @@ def _clear_provider_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
         "PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY",
         "OPENAI_API_KEY",
         "PROMPTSHIELD_ANALYZER_OPENAI_KEY",
+        "PROMPTSHIELD_TARGET_OPENAI_KEY",
+        "PROMPTSHIELD_TARGET_MODEL",
         "GOOGLE_API_KEY",
         "GOOGLE_GENAI_API_KEY",
         "PROMPTSHIELD_ANALYZER_GEMINI_KEY",

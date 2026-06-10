@@ -26,6 +26,7 @@ class TargetType(str, Enum):
     API = "api"
     WEB = "web"
     LOCAL = "local"
+    SYSTEM_PROMPT = "system_prompt"
 
 
 class AuthType(str, Enum):
