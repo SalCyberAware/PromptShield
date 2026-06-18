@@ -1,0 +1,360 @@
+/*
+ * Base reset, element defaults, and component styling for PromptShield.
+ * All values come from tokens.css. Depth comes from hairline borders, never
+ * from gradients or heavy shadows.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+textarea {
+  font-family: inherit;
+}
+
+/* Consistent, visible focus for keyboard users across all interactive elements. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- App shell ----------------------------------------------------------- */
+
+.ps-app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ps-container {
+  width: 100%;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding-left: var(--space-5);
+  padding-right: var(--space-5);
+}
+
+/* ---- Header -------------------------------------------------------------- */
+
+.ps-header {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ps-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+}
+
+.ps-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.01em;
+}
+
+.ps-wordmark__shield {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.ps-header__right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ps-version {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-2);
+}
+
+.ps-ghlink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+}
+
+.ps-ghlink:hover {
+  color: var(--color-text);
+}
+
+/* ---- Hero ---------------------------------------------------------------- */
+
+.ps-main {
+  flex: 1;
+  padding-top: var(--space-8);
+  padding-bottom: var(--space-8);
+}
+
+.ps-hero {
+  text-align: center;
+  margin-bottom: var(--space-7);
+}
+
+.ps-title {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
+}
+
+.ps-subtitle {
+  margin: var(--space-4) auto 0;
+  max-width: 620px;
+  color: var(--color-text-muted);
+  font-size: var(--text-md);
+}
+
+/* ---- Input card ---------------------------------------------------------- */
+
+.ps-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+
+.ps-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.ps-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+}
+
+.ps-ghost-btn {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.ps-ghost-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+  background-color: var(--color-accent-quiet);
+}
+
+.ps-textarea {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  background-color: var(--color-surface-sunken);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.ps-textarea::placeholder {
+  color: var(--color-text-faint);
+}
+
+.ps-textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.ps-counter {
+  margin-top: var(--space-2);
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+
+/* ---- Confidence strip ---------------------------------------------------- */
+
+.ps-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.ps-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.ps-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-accent);
+}
+
+/* ---- Actions ------------------------------------------------------------- */
+
+.ps-actions {
+  margin-top: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ps-scan-btn {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-6);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.ps-scan-btn:hover:not(:disabled) {
+  background-color: var(--color-accent-hover);
+}
+
+.ps-scan-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ps-status {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- Honesty note -------------------------------------------------------- */
+
+.ps-honesty {
+  margin-top: var(--space-6);
+  display: flex;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.ps-honesty__mark {
+  flex-shrink: 0;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+}
+
+.ps-honesty strong {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+
+/* ---- Footer -------------------------------------------------------------- */
+
+.ps-footer {
+  border-top: 1px solid var(--color-border);
+}
+
+.ps-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2) var(--space-4);
+  padding-top: var(--space-5);
+  padding-bottom: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.ps-footer__sep {
+  color: var(--color-text-faint);
+}
+
+.ps-footer a {
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+}
+
+.ps-footer a:hover {
+  color: var(--color-accent);
+}
+
+/* ---- Responsive ---------------------------------------------------------- */
+
+@media (max-width: 600px) {
+  .ps-title {
+    font-size: var(--text-xl);
+  }
+
+  .ps-card {
+    padding: var(--space-4);
+  }
+
+  .ps-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

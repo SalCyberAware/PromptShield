@@ -1,0 +1,81 @@
+/*
+ * PromptShield design tokens.
+ *
+ * This is the visual system for the whole frontend. Every component reads these
+ * custom properties instead of hard-coding values, so the look stays consistent
+ * across this slice, the progress and results views, and any later port of the
+ * sibling tools up to this standard.
+ *
+ * Principles: dark by default, one accent, flat surfaces with depth from hairline
+ * borders only, an 8px spacing grid, and two type weights.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Surfaces & borders ------------------------------------------------ */
+  --color-bg: #0b0f14;            /* deep neutral-slate base */
+  --color-surface: #131a22;       /* elevated card, one step lighter */
+  --color-surface-sunken: #0d1319; /* inset fields inside a card */
+  --color-border: rgba(255, 255, 255, 0.08);        /* hairline */
+  --color-border-strong: rgba(255, 255, 255, 0.14); /* hover / emphasis hairline */
+
+  /* ---- Text -------------------------------------------------------------- */
+  --color-text: #e6edf3;          /* off-white primary */
+  --color-text-muted: #8b97a3;    /* muted secondary */
+  --color-text-faint: #5c6773;    /* tertiary, counters and hints */
+
+  /* ---- Brand accent (the only accent) ------------------------------------ */
+  --color-accent: #2dd4bf;        /* cyan-teal */
+  --color-accent-hover: #3ee0cc;
+  --color-accent-quiet: rgba(45, 212, 191, 0.12); /* tints, hover fills */
+  --color-on-accent: #04231e;     /* dark text on the accent fill (AA on cyan) */
+  --focus-ring: 0 0 0 3px rgba(45, 212, 191, 0.4);
+
+  /* ---- Semantic severity scale (used by the results view in slice 3) ----- */
+  --sev-critical: #f25555; /* red */
+  --sev-high: #f0883e;     /* orange */
+  --sev-medium: #e6b450;   /* amber */
+  --sev-low: #8b97a3;      /* muted gray */
+  --sev-safe: #3fbf8f;     /* green */
+
+  /* ---- Typography -------------------------------------------------------- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', Menlo,
+    Consolas, monospace;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.8125rem;  /* 13px */
+  --text-base: 0.9375rem;/* 15px */
+  --text-md: 1.0625rem;  /* 17px */
+  --text-lg: 1.375rem;   /* 22px */
+  --text-xl: 2rem;       /* 32px */
+  --text-2xl: 2.5rem;    /* 40px */
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.55;
+
+  /* ---- Spacing (8px grid, with 4 and 12 as half steps) ------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ---- Radii ------------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* ---- Layout ------------------------------------------------------------ */
+  --content-width: 820px;
+  --transition-fast: 120ms ease;
+}
