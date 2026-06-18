@@ -85,13 +85,26 @@ class BaseScanner(ABC):
         on_progress: Callable[[int, int, Attack], None] | None = None,
         save_transcripts: bool = True,
         use_ai_analyzer: bool = False,
+        analyzers: list[Any] | None = None,
     ) -> Scan:
-        """Execute the full scan and return results."""
+        """Execute the full scan and return results.
+
+        ``analyzers`` lets a caller inject an explicit AI-analyzer cascade (in
+        priority order) instead of the default one built from ``use_ai_analyzer``.
+        When it is not ``None`` — even an empty list — it is used verbatim and
+        ``use_ai_analyzer`` is ignored. This is the seam the web demo uses to run
+        a trimmed cross-provider cascade. When ``None`` (the default) behaviour is
+        unchanged: the cascade is built via ``_instantiate_ai_analyzers``.
+        """
         from ..analyzers.pattern import PatternAnalyzer
 
         pattern_analyzer = PatternAnalyzer()
         analyzers_used: list[str] = ["pattern_analyzer"]
-        ai_cascade = self._instantiate_ai_analyzers(use_ai_analyzer)
+        ai_cascade = (
+            analyzers
+            if analyzers is not None
+            else self._instantiate_ai_analyzers(use_ai_analyzer)
+        )
 
         scan = Scan(
             scan_id=scan_id,
