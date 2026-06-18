@@ -204,13 +204,21 @@ PromptShield/
 FastAPI, importing `promptshield`. Endpoints:
 
 - **`GET /api/health`** → `{ "status": "ok", "version": <promptshield.__version__> }`.
-- **`GET /api/scan/stream`** (SSE) — accepts the system prompt + options
-  (query/params), streams events as the scan runs. Mirror **ThreatScan's SSE event shape**:
-  - `start` — scan id, attack count, model.
+- **`POST /api/scan/stream`** (SSE) — JSON body `{ "system_prompt": "..." }`,
+  streams events as the scan runs (`text/event-stream`, `data: <json>\n\n` frames,
+  each carrying a `type`). **POST not GET**: real system prompts are long and would
+  blow past URL/query-param limits; the frontend consumes the body via
+  `fetch` + `ReadableStream`. Event shape mirrors **ThreatScan's** start/progress/done:
+  - `start` — `{ type:"start", total }` (attack count).
   - `progress` — one per attack, driven by the existing `on_progress(current, total, attack)`
-    callback (attack id, name, category, index/total).
-  - `done` — final report: OWASP LLM category breakdown, per-attack verdicts, severities.
-  - `error` — fatal failure, friendly message (also used for rate-limit / budget-cap rejects).
+    callback: `{ type:"progress", current, total, attack_id, owasp_category }`.
+  - `done` — `{ type:"done", result }` where `result` is a **curated** projection
+    (no raw target responses): per-attack `{ attack_id, name, owasp_category, severity,
+    payload, vulnerable, confidence, confidence_score, analyzer_reasoning,
+    needs_manual_review }` plus a `summary` (passed/failed, breakdown by severity and
+    OWASP category, target model).
+  - `error` — `{ type:"error", message }`, emitted if the scan raises; the stream then
+    closes cleanly (also the slot for future rate-limit / budget-cap rejects).
 
 Implementation note: `run_scan` is `async`; the SSE handler awaits it while pushing
 `on_progress` callbacks onto the event stream (e.g. via an `asyncio.Queue`).

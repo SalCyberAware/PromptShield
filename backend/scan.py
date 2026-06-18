@@ -30,6 +30,8 @@ from promptshield.engines.system_prompt_scanner import (
 )
 from promptshield.models import Attack, Scan, TargetConfig, TargetType
 
+_INTERNAL_URL_PREFIX = "internal://"
+
 # ── Decision 1: the 13 web-demo attacks (explicit allowlist) ────────────────────
 # The full 50 stays in the CLI. Order here is the visitor-facing run order.
 WEB_DEMO_ATTACK_IDS: tuple[str, ...] = (
@@ -146,3 +148,82 @@ async def run_web_scan(
         on_progress=on_progress,
         analyzers=build_web_analyzers(),
     )
+
+
+def serialize_scan_result(scan: Scan) -> dict[str, Any]:
+    """Project a completed ``Scan`` into the curated payload for the ``done`` event.
+
+    Per the locked design (``docs/WEB_ARCHITECTURE.md``), the web demo returns only
+    what the frontend renders — per-attack pass/fail, OWASP category, severity, the
+    attack payload, and verdict confidence/reasoning — plus an overall summary. It
+    deliberately **omits the raw target-model responses** carried in
+    ``scan.transcripts``, to keep the public payload lean and avoid echoing full
+    model outputs to the client.
+
+    An attack is ``vulnerable`` when it produced a finding (the attack succeeded
+    against the system prompt). The per-attack list is built from the transcripts
+    (one per attack, in run order) joined to any finding for that attack; the
+    severity/OWASP breakdowns count only the vulnerable attacks.
+    """
+    findings_by_attack = {f.attack_id: f for f in scan.findings}
+
+    results: list[dict[str, Any]] = []
+    by_severity: dict[str, int] = {}
+    by_owasp_category: dict[str, int] = {}
+    failed = 0
+
+    for transcript in scan.transcripts:
+        finding = findings_by_attack.get(transcript.attack_id)
+        vulnerable = finding is not None
+
+        results.append(
+            {
+                "attack_id": transcript.attack_id,
+                "name": transcript.attack_name,
+                "owasp_category": transcript.owasp_category,
+                "severity": transcript.severity.value,
+                "payload": transcript.prompt,
+                "vulnerable": vulnerable,
+                "confidence": finding.confidence.value if finding else None,
+                "confidence_score": finding.confidence_score if finding else None,
+                "needs_manual_review": finding.needs_manual_review if finding else False,
+                "analyzer_reasoning": (
+                    [
+                        f"{v.analyzer_name}: {v.reasoning}"
+                        for v in finding.analyzer_verdicts
+                        if v.reasoning
+                    ]
+                    if finding
+                    else []
+                ),
+            }
+        )
+
+        if vulnerable:
+            failed += 1
+            by_severity[transcript.severity.value] = (
+                by_severity.get(transcript.severity.value, 0) + 1
+            )
+            by_owasp_category[transcript.owasp_category] = (
+                by_owasp_category.get(transcript.owasp_category, 0) + 1
+            )
+
+    total = len(scan.transcripts)
+    target_model = scan.target.url.removeprefix(_INTERNAL_URL_PREFIX)
+
+    return {
+        "scan_id": scan.scan_id,
+        "status": scan.status.value,
+        "target_model": target_model,
+        "attacks_total": scan.attacks_total,
+        "attacks_run": scan.attacks_run,
+        "analyzers_used": list(scan.analyzers_used),
+        "summary": {
+            "passed": total - failed,
+            "failed": failed,
+            "by_severity": by_severity,
+            "by_owasp_category": by_owasp_category,
+            "target_model": target_model,
+        },
+        "results": results,
+    }
