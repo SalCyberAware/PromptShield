@@ -30,6 +30,57 @@ Chosen over bring-your-own-endpoint because it is:
 - **Self-contained** — no user credentials, no SSRF surface, no target reachability problems.
 - **Maximally reusing the engine** — it's one new `BaseScanner` subclass; nothing else in the core changes.
 
+## Phase 0 decisions (locked)
+
+### Decision 1 — Trimmed web-demo attack set (13 of 50)
+
+**Principle:** maximize attacks whose result actually depends on the visitor's pasted
+system prompt (the ✅ system-prompt-testable set from the library inventory), weighted
+toward prompt-injection + system-prompt-leak since that is what a system prompt's
+defenses actually govern. **The full 50 stays in the CLI.**
+
+The 13 (every ID verified present in `promptshield/attacks/data/attacks_v1.yaml`):
+
+| ID | Name | OWASP |
+|----|------|-------|
+| PS-LLM01-001 | Direct instruction override | LLM01 |
+| PS-LLM01-009 | Prompt leaking via repetition | LLM01 |
+| PS-LLM01-002 | DAN jailbreak | LLM01 |
+| PS-LLM01-004 | Encoding bypass (base64) | LLM01 |
+| PS-LLM01-008 | Authority impersonation | LLM01 |
+| PS-CUSTOM-001 | Token-boundary confusion | LLM01 |
+| PS-CUSTOM-003 | Adversarial suffix (GCG) | LLM01 |
+| PS-LLM06-001 | System prompt extraction | LLM06 |
+| PS-CUSTOM-004 | Memory confabulation | LLM06 |
+| PS-LLM09-002 | Medical advice without disclaimer | LLM09 |
+| PS-LLM10-001 | Model fingerprinting | LLM10 |
+| PS-LLM08-002 | Privilege escalation | LLM08 |
+| PS-LLM02-001 | XSS payload generation | LLM02 |
+
+**Coverage:** 6 OWASP categories — LLM01, LLM02, LLM06, LLM08, LLM09, LLM10.
+
+**Not-applicable categories** (LLM03 poisoning, LLM05 supply chain, LLM07 plugin design,
+tool-dependent LLM08 agency): the results UI shows these as **"Not applicable to
+system-prompt scanning — run the full CLI scan against a live endpoint,"** *not* as
+passed. Honest framing plus a CLI upsell.
+
+### Decision 2 — Analyzer + target config
+
+- **Target** (runs the visitor's system prompt + attack payload): **`gpt-4o-mini`**.
+  Cheaper models are the tougher, more realistic security test — they are what gets
+  deployed at scale and are more injection-prone — and they bound public-demo cost.
+- **Analyzer** (judges whether an attack succeeded): **pattern floor + a 2-tier
+  cross-provider cascade — Claude Sonnet (primary) → Gemini Flash (fallback).** A
+  stronger judge than Haiku because verdict accuracy *is* demo credibility;
+  cross-provider from the OpenAI target to avoid same-family bias; the cascade gives
+  uptime resilience at ~one analyzer call per attack in the typical case.
+- **Model tier is CONFIGURABLE via env vars** (target + analyzer), defaulting
+  conservative for the public demo. CLI / enterprise tier / deep audits flip to
+  top-tier (Opus / flagship). The strength lives in the architecture; the public demo
+  just defaults bounded.
+- **Cost shape:** ~13 attacks × (1 target call + 1 analyzer call) per scan; bounded
+  further by rate limiting (later slice).
+
 ## Key engine change: a new target type
 
 This is the **one real addition to the detection core**. Everything else is wrapper.
@@ -109,16 +160,16 @@ full 4-tier cascade is dozens of paid model calls per click. Knobs to set in Pha
 - **Reduced attack set for the demo** — ship ~10–15 representative attacks spanning
   OWASP LLM01–LLM10, not all 50. The **full 50 stays in the CLI**. Curate a
   `web_demo` tag or a fixed ID allowlist so the set is explicit and reviewable.
-- **Single analyzer for the demo** — pattern analyzer + **one** cheap AI tier
-  (`use_ai_analyzer=True` resolves to the first working cascade entry). Do **not**
-  run the full 4-tier cascade on the web path: the cascade's redundancy is a
-  reliability feature for real audits, and matters far less than cost for a demo.
+- **Reduced analyzer for the demo** — pattern floor + a **2-tier** cross-provider
+  cascade (Claude Sonnet → Gemini Flash), **not** the full 4-tier cascade; see
+  **Decision 2** above. Typically ~one analyzer call per attack, with the second tier
+  engaging only as fallback — bounded cost with verdict accuracy and uptime resilience.
 - **Daily global budget cap** — a process-wide counter that disables scanning (serves
   a friendly "demo at capacity, try later" message) once a daily spend ceiling is hit.
 
 These are configuration, not new engine logic — the reduced attack set is just a
-filtered `list[Attack]`, and "single analyzer" is the existing `use_ai_analyzer`
-flag with a trimmed cascade.
+filtered `list[Attack]`, and the "reduced analyzer" is the existing `use_ai_analyzer`
+flag with a trimmed (2-tier) cascade.
 
 ## Repo structure
 
@@ -133,11 +184,13 @@ PromptShield/
 │   ├── reporters/        # html + json
 │   ├── models.py
 │   └── cli.py
-├── backend/             # NEW — FastAPI app importing promptshield as a library
-│   ├── app/
-│   │   ├── main.py       # app, CORS, routes
-│   │   ├── scan.py       # wires SystemPromptScanner + reduced attack set + SSE
-│   │   └── limits.py     # rate limiting, length cap, budget cap
+├── backend/             # FastAPI app importing promptshield as a library — FLAT layout (mirrors SOCTriage)
+│   ├── main.py          # app, CORS, routes
+│   ├── scan.py          # wires SystemPromptScanner + reduced attack set + SSE (Phase 1)
+│   ├── limits.py        # rate limiting, length cap, budget cap (Phase 1)
+│   ├── conftest.py
+│   ├── pytest.ini
+│   ├── requirements.txt
 │   └── tests/
 ├── frontend/            # NEW — React + Vite
 │   ├── src/
@@ -207,6 +260,8 @@ Keep the existing package jobs as-is so the published package's gate is unchange
 
 ## Phase sequence (mirrors Epic #1)
 
+0. **Phase 0 — Design (this doc).** Architecture, locked scan model, and locked Phase 0
+   decisions (trimmed web-demo attack set + analyzer/target config). ✅ **Complete.**
 1. **Phase 1 — Backend.** `SystemPromptScanner` + reduced attack set + single-analyzer
    config; FastAPI `/api/health` and `/api/scan/stream` (SSE); abuse knobs; tests.
 2. **Phase 2 — Frontend.** React + Vite UI: textarea + example, SSE progress, results view.
