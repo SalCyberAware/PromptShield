@@ -661,6 +661,81 @@ class TestRunScanAIFallbackChain:
         assert verdict_names == {"pattern_analyzer"}
 
 
+class TestRunScanInjectedAnalyzers:
+    """A caller-supplied ``analyzers=`` list bypasses the default cascade build."""
+
+    async def test_injected_list_used_default_cascade_not_built(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """The injected cascade is used verbatim; ``_instantiate_ai_analyzers`` is
+        never called and ``use_ai_analyzer`` is ignored when ``analyzers`` is given."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        primary_verdict = AnalyzerVerdict(
+            analyzer_name="injected_primary",
+            success=True,
+            confidence_score=0.92,
+            reasoning="Injected primary detected leak.",
+        )
+        primary = _mock_ai_analyzer("injected_primary", verdict=primary_verdict)
+        fallback = _mock_ai_analyzer(
+            "injected_fallback",
+            verdict=AnalyzerVerdict(
+                analyzer_name="injected_fallback",
+                success=False,
+                confidence_score=0.5,
+                reasoning="(unused)",
+            ),
+        )
+
+        with patch.object(scanner, "_instantiate_ai_analyzers") as build_cascade:
+            # use_ai_analyzer=True would normally build the 4-tier default; the
+            # injected list must override it entirely.
+            scan = await scanner.run_scan(
+                scan_id="S", use_ai_analyzer=True, analyzers=[primary, fallback]
+            )
+
+        build_cascade.assert_not_called()
+        primary.analyze.assert_awaited_once()
+        fallback.analyze.assert_not_awaited()
+        assert "injected_primary" in scan.analyzers_used
+        assert "injected_fallback" not in scan.analyzers_used
+        # No default-cascade providers leaked in.
+        assert "claude_analyzer" not in scan.analyzers_used
+        assert "openai_analyzer" not in scan.analyzers_used
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert "injected_primary" in verdict_names
+
+    async def test_injected_list_walks_to_fallback_when_primary_fails(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Walk/fallback works on the injected list: primary raises, fallback wins."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        primary = _mock_ai_analyzer(
+            "injected_primary", side_effect=RuntimeError("injected primary blew up")
+        )
+        fallback_verdict = AnalyzerVerdict(
+            analyzer_name="injected_fallback",
+            success=True,
+            confidence_score=0.85,
+            reasoning="Injected fallback confirmed leak.",
+        )
+        fallback = _mock_ai_analyzer("injected_fallback", verdict=fallback_verdict)
+
+        with patch.object(scanner, "_instantiate_ai_analyzers") as build_cascade:
+            scan = await scanner.run_scan(scan_id="S", analyzers=[primary, fallback])
+
+        build_cascade.assert_not_called()
+        primary.analyze.assert_awaited_once()
+        fallback.analyze.assert_awaited_once()
+        assert any("injected primary blew up" in err for err in scanner.errors)
+        assert "injected_fallback" in scan.analyzers_used
+        assert "injected_primary" not in scan.analyzers_used
+        assert len(scan.findings) == 1
+        verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
+        assert "injected_fallback" in verdict_names
+
+
 class TestRunScanFindings:
     """When findings are and aren't created, and what they contain."""
 
