@@ -323,22 +323,317 @@ textarea {
   transition: width 200ms ease;
 }
 
-/* ---- Minimal done state -------------------------------------------------- */
+/* ---- Results view -------------------------------------------------------- */
 
-.ps-result {
+.ps-results {
   margin-top: var(--space-5);
 }
 
-.ps-result__headline {
+.ps-results__headline {
+  border-left: 3px solid var(--color-border-strong);
+  padding-left: var(--space-4);
+}
+
+.ps-results__headline.is-good {
+  border-left-color: var(--sev-safe);
+}
+
+.ps-results__headline.is-bad {
+  border-left-color: var(--sev-critical);
+}
+
+.ps-results__headline.is-mixed {
+  border-left-color: var(--sev-medium);
+}
+
+.ps-results__lead {
   font-size: var(--text-md);
   color: var(--color-text);
 }
 
-.ps-result__meta {
+.ps-results__caveat {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.ps-results__review {
   margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--sev-medium);
+}
+
+/* ---- Breakdowns ---------------------------------------------------------- */
+
+.ps-breakdowns {
+  margin-top: var(--space-5);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.ps-breakdown {
+  flex: 1;
+  min-width: 240px;
+}
+
+.ps-breakdown__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+
+.ps-breakdown__hint {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.ps-breakdown__note {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  line-height: var(--leading-normal);
+}
+
+.ps-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.ps-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
+}
+
+.ps-chip.is-hit {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.ps-chip__count {
+  font-weight: var(--weight-medium);
+}
+
+/* ---- Findings list ------------------------------------------------------- */
+
+.ps-findings {
+  margin-top: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ps-finding {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background-color: var(--color-surface);
+}
+
+.ps-finding.is-quiet {
+  background-color: transparent;
+}
+
+.ps-finding__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ps-finding__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ps-finding__name {
+  font-size: var(--text-base);
+  color: var(--color-text);
+}
+
+.ps-finding__id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+
+.ps-finding__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.ps-owasp-chip {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-2);
+}
+
+.ps-finding__body {
+  margin-top: var(--space-3);
+}
+
+.ps-finding__reason {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.ps-finding__prov {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+
+.ps-finding__agree {
+  color: var(--color-text-muted);
+}
+
+.ps-finding__disagree {
+  color: var(--sev-medium);
+}
+
+.ps-finding__note {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- Status badges (each status visually distinct; none green but held) --- */
+
+.ps-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.ps-badge__mark {
+  font-family: var(--font-mono);
+}
+
+.ps-badge.is-held {
+  color: var(--sev-safe);
+}
+
+.ps-badge.is-vulnerable {
+  color: var(--sev-critical);
+}
+
+.ps-badge.is-review {
+  color: var(--sev-medium);
+}
+
+.ps-badge.is-unjudged {
+  color: var(--color-text-muted);
+}
+
+.ps-badge.is-error {
+  color: var(--color-text-faint);
+  border-style: dashed;
+}
+
+/* ---- Severity tags ------------------------------------------------------- */
+
+.ps-sev {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-transform: capitalize;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-2);
+  border: 1px solid currentColor;
+}
+
+.ps-sev.is-critical {
+  color: var(--sev-critical);
+}
+
+.ps-sev.is-high {
+  color: var(--sev-high);
+}
+
+.ps-sev.is-medium {
+  color: var(--sev-medium);
+}
+
+.ps-sev.is-low {
+  color: var(--sev-low);
+}
+
+/* ---- Collapsible evidence ------------------------------------------------ */
+
+.ps-evidence {
+  margin-top: var(--space-3);
+}
+
+.ps-evidence summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+}
+
+.ps-evidence__body {
+  margin-top: var(--space-2);
+  background-color: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- Held group (quieter, collapsed) ------------------------------------- */
+
+.ps-held-group summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--sev-safe);
+  padding: var(--space-2) 0;
+}
+
+.ps-held-group__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* ---- Example buttons ----------------------------------------------------- */
+
+.ps-example-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* ---- Error state --------------------------------------------------------- */

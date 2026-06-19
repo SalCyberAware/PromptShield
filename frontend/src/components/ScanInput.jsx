@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { EXAMPLE_PROMPT } from '../lib/examplePrompt.js'
+import { HARDENED_PROMPT, LEAKY_PROMPT } from '../lib/examplePrompt.js'
 import { runScanStream } from '../lib/scanStream.js'
 import ConfidenceStrip from './ConfidenceStrip.jsx'
+import ResultsView from './ResultsView.jsx'
 
 const PLACEHOLDER =
   'Paste the system prompt you want to test. The text that tells your AI how to behave, what to refuse, and what to keep secret.'
@@ -64,8 +65,8 @@ export default function ScanInput() {
     setError('')
   }
 
-  function handleUseExample() {
-    setPrompt(EXAMPLE_PROMPT)
+  function handleUseExample(text) {
+    setPrompt(text)
     handleReset()
   }
 
@@ -75,14 +76,24 @@ export default function ScanInput() {
         <label className="ps-label" htmlFor="system-prompt">
           System prompt
         </label>
-        <button
-          type="button"
-          className="ps-ghost-btn"
-          onClick={handleUseExample}
-          disabled={isScanning}
-        >
-          Use example
-        </button>
+        <div className="ps-example-btns">
+          <button
+            type="button"
+            className="ps-ghost-btn"
+            onClick={() => handleUseExample(LEAKY_PROMPT)}
+            disabled={isScanning}
+          >
+            Try a leaky prompt
+          </button>
+          <button
+            type="button"
+            className="ps-ghost-btn"
+            onClick={() => handleUseExample(HARDENED_PROMPT)}
+            disabled={isScanning}
+          >
+            Try a hardened prompt
+          </button>
+        </div>
       </div>
 
       <textarea
@@ -120,7 +131,7 @@ export default function ScanInput() {
       )}
 
       {status === 'done' && result && (
-        <ScanDone result={result} onReset={handleReset} />
+        <ResultsView result={result} onReset={handleReset} />
       )}
 
       {status === 'error' && (
@@ -154,29 +165,6 @@ function ScanProgress({ progress, onCancel }) {
       <div className="ps-actions">
         <button type="button" className="ps-ghost-btn" onClick={onCancel}>
           Cancel
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function ScanDone({ result, onReset }) {
-  const { failed = 0, target_model } = result.summary ?? {}
-  const total = result.attacks_total ?? 13
-  const headline =
-    failed === 0
-      ? `Scan complete. Your prompt held against all ${total} attacks.`
-      : `Scan complete. ${failed} of ${total} attacks got through.`
-
-  return (
-    <div className="ps-result" aria-live="polite">
-      <p className="ps-result__headline">{headline}</p>
-      {target_model && (
-        <p className="ps-result__meta">Target model: {target_model}</p>
-      )}
-      <div className="ps-actions">
-        <button type="button" className="ps-scan-btn" onClick={onReset}>
-          Scan another prompt
         </button>
       </div>
     </div>
