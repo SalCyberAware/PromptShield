@@ -37,6 +37,7 @@ Thumbs.db
 !package.json
 !package-lock.json
 !pyproject.toml.json
+!railway.json
 scans/
 reports/
 output/

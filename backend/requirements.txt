@@ -1,6 +1,8 @@
-# PromptShield engine — installed from the repo root (editable for local dev).
-# On Railway/PyPI this becomes a pinned `promptshield==x.y.z` once published.
--e ../
+# Web wrapper runtime dependencies.
+#
+# The promptshield engine is installed SEPARATELY from the repo root
+# (`pip install .`) so a fresh production environment works without the
+# editable-parent hack. See railway.json for the build command that does both.
 fastapi==0.115.0
 uvicorn==0.30.6
 python-dotenv==1.0.1
