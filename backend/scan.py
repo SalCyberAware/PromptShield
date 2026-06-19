@@ -28,9 +28,29 @@ from promptshield.engines.system_prompt_scanner import (
     default_target_model,
     internal_target_url,
 )
-from promptshield.models import Attack, Scan, TargetConfig, TargetType
+from promptshield.models import (
+    Attack,
+    Confidence,
+    Finding,
+    Scan,
+    TargetConfig,
+    TargetType,
+    Transcript,
+)
 
 _INTERNAL_URL_PREFIX = "internal://"
+
+# ── Result projection vocabulary (slice 3a) ─────────────────────────────────────
+# Per-attack status. "error" and "not_ai_judged" must never be counted or shown
+# as "held": that is the core honesty rule.
+_PATTERN_ANALYZER = "pattern_analyzer"
+_RESPONSE_EXCERPT_LIMIT = 600
+_TRUNCATION_MARKER = "... [truncated]"
+# Statuses that represent an AI-confirmed concern; only these feed the severity
+# and OWASP breakdowns.
+_FINDING_STATUSES = ("vulnerable", "needs_review")
+# Statuses that carry a bounded excerpt of the target reply for the frontend.
+_EXCERPT_STATUSES = ("vulnerable", "needs_review", "not_ai_judged")
 
 # ── Decision 1: the 13 web-demo attacks (explicit allowlist) ────────────────────
 # The full 50 stays in the CLI. Order here is the visitor-facing run order.
@@ -150,57 +170,181 @@ async def run_web_scan(
     )
 
 
+def _make_excerpt(text: str, limit: int = _RESPONSE_EXCERPT_LIMIT) -> str:
+    """Return at most ``limit`` chars of ``text``, with a plain truncation marker."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNCATION_MARKER
+
+
+def _verdict_entry(
+    analyzer: str,
+    vulnerable: bool,
+    confidence_score: float | None,
+    reasoning: str | None,
+    errored: bool,
+) -> dict[str, Any]:
+    """One judge verdict in the ensemble-ready list."""
+    return {
+        "analyzer": analyzer,
+        "vulnerable": vulnerable,
+        "confidence_score": confidence_score,
+        "reasoning": reasoning,
+        "errored": errored,
+    }
+
+
+def _agreement(verdicts: list[dict[str, Any]]) -> str:
+    """Agreement across judges: 'single' for 0 or 1 judge, else 'agree'/'disagree'."""
+    if len(verdicts) <= 1:
+        return "single"
+    decisions = {v["vulnerable"] for v in verdicts}
+    return "agree" if len(decisions) == 1 else "disagree"
+
+
+def _build_verdicts(
+    status: str, judged_by: str, finding: Finding | None
+) -> list[dict[str, Any]]:
+    """Build the per-judge verdict list (one entry in single-judge mode).
+
+    A later ensemble slice fills this with multiple entries with no schema change.
+    """
+    if status in _FINDING_STATUSES and finding is not None:
+        ai_verdict = next(
+            (v for v in finding.analyzer_verdicts if v.analyzer_name == judged_by),
+            None,
+        )
+        if ai_verdict is not None:
+            return [
+                _verdict_entry(
+                    ai_verdict.analyzer_name,
+                    ai_verdict.success,
+                    ai_verdict.confidence_score,
+                    ai_verdict.reasoning,
+                    False,
+                )
+            ]
+        return [_verdict_entry(judged_by, True, finding.confidence_score, None, False)]
+    if status == "held":
+        # The held verdict's reasoning is not persisted (no finding is created when
+        # every judge agrees the prompt defended), so only the decision is known.
+        return [_verdict_entry(judged_by, False, None, None, False)]
+    return []
+
+
+def _project_attack(transcript: Transcript, finding: Finding | None) -> dict[str, Any]:
+    """Project one attack transcript (plus any finding) into the curated result.
+
+    Status is derived from signals ``run_scan`` already records:
+      - a ``[ERROR]``/``[TIMEOUT]`` response prefix means the target call failed,
+      - ``analyzers_run`` minus the pattern floor tells us if an AI judge ran,
+      - the joined finding tells us whether a judged attack got through.
+    """
+    response = transcript.response or ""
+    errored = response.startswith(("[ERROR]", "[TIMEOUT]"))
+    ai_run = [name for name in transcript.analyzers_run if name != _PATTERN_ANALYZER]
+    ai_judged = bool(ai_run)
+
+    if errored:
+        status = "error"
+    elif not ai_judged:
+        # Target replied but no AI judge produced a verdict; it fell to the pattern
+        # floor. Never counted as held.
+        status = "not_ai_judged"
+    elif finding is not None:
+        low_confidence = (
+            finding.needs_manual_review or finding.confidence == Confidence.LOW
+        )
+        status = "needs_review" if low_confidence else "vulnerable"
+    else:
+        status = "held"
+
+    if status == "error":
+        judged_by = "none"
+    elif ai_judged:
+        judged_by = ai_run[0]
+    else:
+        judged_by = _PATTERN_ANALYZER
+
+    is_finding_status = status in _FINDING_STATUSES
+    if is_finding_status and finding is not None:
+        confidence_score: float | None = finding.confidence_score
+        confidence_band: str | None = finding.confidence.value
+    else:
+        confidence_score = None
+        confidence_band = None
+
+    verdicts = _build_verdicts(status, judged_by, finding)
+
+    if status == "vulnerable":
+        final_vulnerable: bool | None = True
+    elif status == "held":
+        final_vulnerable = False
+    else:
+        final_vulnerable = None
+
+    aggregate = {
+        "status": status,
+        "agreement": _agreement(verdicts),
+        "final_vulnerable": final_vulnerable,
+        "final_confidence": confidence_score if is_finding_status else None,
+    }
+
+    return {
+        "attack_id": transcript.attack_id,
+        "name": transcript.attack_name,
+        "owasp_category": transcript.owasp_category,
+        "severity": transcript.severity.value,
+        "payload": transcript.prompt,
+        "status": status,
+        "ai_judged": ai_judged,
+        "judged_by": judged_by,
+        "confidence_score": confidence_score,
+        "confidence_band": confidence_band,
+        "needs_manual_review": finding.needs_manual_review if finding else False,
+        "response_excerpt": (
+            _make_excerpt(response) if status in _EXCERPT_STATUSES else None
+        ),
+        "verdicts": verdicts,
+        "aggregate": aggregate,
+    }
+
+
 def serialize_scan_result(scan: Scan) -> dict[str, Any]:
-    """Project a completed ``Scan`` into the curated payload for the ``done`` event.
+    """Project a completed ``Scan`` into the curated, honest payload for ``done``.
 
-    Per the locked design (``docs/WEB_ARCHITECTURE.md``), the web demo returns only
-    what the frontend renders — per-attack pass/fail, OWASP category, severity, the
-    attack payload, and verdict confidence/reasoning — plus an overall summary. It
-    deliberately **omits the raw target-model responses** carried in
-    ``scan.transcripts``, to keep the public payload lean and avoid echoing full
-    model outputs to the client.
+    Each attack carries an explicit ``status`` (one of "vulnerable", "held",
+    "needs_review", "error", "not_ai_judged") instead of a binary flag, plus its
+    provenance, an ensemble-ready ``verdicts`` list, and an ``aggregate``. The
+    hard rule: "error" and "not_ai_judged" are never bucketed or shown as "held".
 
-    An attack is ``vulnerable`` when it produced a finding (the attack succeeded
-    against the system prompt). The per-attack list is built from the transcripts
-    (one per attack, in run order) joined to any finding for that attack; the
-    severity/OWASP breakdowns count only the vulnerable attacks.
+    The payload stays curated and bounded. The only target output included is a
+    ``response_excerpt`` capped at ``_RESPONSE_EXCERPT_LIMIT`` chars, populated for
+    statuses where the reply is evidence the frontend needs. API keys are never
+    part of any field.
     """
     findings_by_attack = {f.attack_id: f for f in scan.findings}
 
     results: list[dict[str, Any]] = []
+    by_status: dict[str, int] = {
+        "held": 0,
+        "vulnerable": 0,
+        "needs_review": 0,
+        "error": 0,
+        "not_ai_judged": 0,
+    }
     by_severity: dict[str, int] = {}
     by_owasp_category: dict[str, int] = {}
-    failed = 0
 
     for transcript in scan.transcripts:
         finding = findings_by_attack.get(transcript.attack_id)
-        vulnerable = finding is not None
+        entry = _project_attack(transcript, finding)
+        results.append(entry)
 
-        results.append(
-            {
-                "attack_id": transcript.attack_id,
-                "name": transcript.attack_name,
-                "owasp_category": transcript.owasp_category,
-                "severity": transcript.severity.value,
-                "payload": transcript.prompt,
-                "vulnerable": vulnerable,
-                "confidence": finding.confidence.value if finding else None,
-                "confidence_score": finding.confidence_score if finding else None,
-                "needs_manual_review": finding.needs_manual_review if finding else False,
-                "analyzer_reasoning": (
-                    [
-                        f"{v.analyzer_name}: {v.reasoning}"
-                        for v in finding.analyzer_verdicts
-                        if v.reasoning
-                    ]
-                    if finding
-                    else []
-                ),
-            }
-        )
-
-        if vulnerable:
-            failed += 1
+        status = entry["status"]
+        by_status[status] = by_status.get(status, 0) + 1
+        if status in _FINDING_STATUSES:
             by_severity[transcript.severity.value] = (
                 by_severity.get(transcript.severity.value, 0) + 1
             )
@@ -208,7 +352,6 @@ def serialize_scan_result(scan: Scan) -> dict[str, Any]:
                 by_owasp_category.get(transcript.owasp_category, 0) + 1
             )
 
-    total = len(scan.transcripts)
     target_model = scan.target.url.removeprefix(_INTERNAL_URL_PREFIX)
 
     return {
@@ -219,11 +362,16 @@ def serialize_scan_result(scan: Scan) -> dict[str, Any]:
         "attacks_run": scan.attacks_run,
         "analyzers_used": list(scan.analyzers_used),
         "summary": {
-            "passed": total - failed,
-            "failed": failed,
+            "target_model": target_model,
+            "analyzers_used": list(scan.analyzers_used),
+            "by_status": by_status,
             "by_severity": by_severity,
             "by_owasp_category": by_owasp_category,
-            "target_model": target_model,
+            # Kept for the existing done headline: only AI-confirmed got-throughs
+            # count as failed, only AI-confirmed defenses count as passed. Other
+            # statuses are deliberately neither.
+            "failed": by_status["vulnerable"],
+            "passed": by_status["held"],
         },
         "results": results,
     }
