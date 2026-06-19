@@ -26,3 +26,15 @@ def _clear_provider_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for var in _PROVIDER_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test a fresh limiter so per-IP/daily state never leaks across tests.
+
+    Limit-specific tests replace ``main.limiter`` with their own configured one.
+    """
+    import limits
+    import main
+
+    monkeypatch.setattr(main, "limiter", limits.Limiter())

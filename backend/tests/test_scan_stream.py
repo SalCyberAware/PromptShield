@@ -12,9 +12,11 @@ import json
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
+import main
 import pytest
 import scan
 from fastapi.testclient import TestClient
+from limits import Limiter
 from main import app
 from scan import (
     load_web_demo_attacks,
@@ -706,3 +708,83 @@ class TestRunEnsembleJudging:
 
         assert verdicts[aid] == []
         assert called["n"] == 0  # no judge spend on an errored target
+
+
+# ── Abuse controls at the endpoint (slice 4) ────────────────────────────────────
+
+
+class TestScanStreamLimits:
+    def _post(self, client: TestClient, prompt: str = "You are a bot.", ip: str = "1.1.1.1"):
+        return client.post(
+            "/api/scan/stream",
+            json={"system_prompt": prompt},
+            headers={"X-Forwarded-For": ip},
+        )
+
+    def test_oversized_prompt_rejected_400_no_scan(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main, "limiter", Limiter(max_prompt_chars=10))
+        spy = AsyncMock()
+        monkeypatch.setattr(main, "run_web_scan", spy)
+
+        response = self._post(client, prompt="x" * 11)
+
+        assert response.status_code == 400
+        assert "too long" in response.json()["detail"]
+        spy.assert_not_awaited()  # rejected before any scan work
+
+    def test_happy_path_under_limits_starts_scan(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main, "limiter", Limiter())
+        monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
+
+        response = self._post(client)
+
+        assert response.status_code == 200
+        types = [e["type"] for e in _parse_events(response.text)]
+        assert types[0] == "start"
+        assert types[-1] == "done"
+
+    def test_per_ip_limit_rejects_n_plus_1_then_recovers(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = {"t": 1_000_000.0}
+        monkeypatch.setattr(
+            main,
+            "limiter",
+            Limiter(ip_rate=2, ip_window_seconds=300, time_fn=lambda: clock["t"]),
+        )
+        monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
+
+        assert self._post(client).status_code == 200
+        assert self._post(client).status_code == 200
+        blocked = self._post(client)
+        assert blocked.status_code == 429
+        assert "too fast" in blocked.json()["detail"]
+        assert int(blocked.headers["Retry-After"]) >= 1
+
+        clock["t"] += 301  # window passes
+        assert self._post(client).status_code == 200
+
+    def test_daily_cap_rejects_past_ceiling(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main, "limiter", Limiter(daily_cap=1, ip_rate=100))
+        monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
+
+        assert self._post(client, ip="1.1.1.1").status_code == 200
+        capped = self._post(client, ip="2.2.2.2")  # different IP, still globally capped
+        assert capped.status_code == 503
+        assert "capacity" in capped.json()["detail"]
+
+    def test_x_forwarded_for_is_honored(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main, "limiter", Limiter(ip_rate=1, daily_cap=100))
+        monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
+
+        assert self._post(client, ip="1.1.1.1").status_code == 200
+        assert self._post(client, ip="1.1.1.1").status_code == 429  # same IP, over limit
+        assert self._post(client, ip="2.2.2.2").status_code == 200  # distinct IP, allowed

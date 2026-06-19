@@ -2,7 +2,8 @@
 
 Thin web wrapper around the ``promptshield`` package (imported as a library).
 Exposes ``/api/health`` and the streaming ``POST /api/scan/stream`` scan endpoint.
-Abuse controls (rate limiting, length cap, budget cap) land in a later slice.
+Abuse controls (length cap, per-IP rate limit, daily cap) gate the scan endpoint
+before any model call; see ``limits.py``.
 """
 from __future__ import annotations
 
@@ -12,9 +13,10 @@ import os
 from collections.abc import AsyncIterator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from limits import LimitRejectedError, build_limiter
 from pydantic import BaseModel
 from scan import (
     WEB_DEMO_ATTACK_IDS,
@@ -28,6 +30,9 @@ from promptshield import __version__ as promptshield_version
 from promptshield.models import Attack
 
 load_dotenv()
+
+# Single shared limiter for this instance. In-memory state; see limits.py.
+limiter = build_limiter()
 
 app = FastAPI(
     title="PromptShield API",
@@ -156,11 +161,37 @@ async def _scan_event_stream(system_prompt: str) -> AsyncIterator[str]:
         await task
 
 
+def _client_ip(request: Request) -> str:
+    """Resolve the client IP behind a proxy.
+
+    Behind Railway's proxy the real client is the leftmost entry of
+    ``X-Forwarded-For``; this trusts the platform to set and sanitize that header.
+    Falls back to the direct socket peer for local/dev use.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @app.post("/api/scan/stream")
-async def scan_stream(request: ScanRequest) -> StreamingResponse:
-    """Run the web-demo scan against the submitted system prompt, streaming SSE."""
+async def scan_stream(payload: ScanRequest, request: Request) -> StreamingResponse:
+    """Run the web-demo scan against the submitted system prompt, streaming SSE.
+
+    Abuse controls run here, before the stream starts, so a rejected request never
+    reaches a target or judge call and is returned as a clean HTTP error.
+    """
+    try:
+        limiter.check_and_consume(payload.system_prompt, _client_ip(request))
+    except LimitRejectedError as rejected:
+        raise HTTPException(
+            status_code=rejected.status_code,
+            detail=rejected.message,
+            headers=rejected.headers,
+        ) from rejected
+
     return StreamingResponse(
-        _scan_event_stream(request.system_prompt),
+        _scan_event_stream(payload.system_prompt),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
