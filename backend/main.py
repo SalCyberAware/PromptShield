@@ -16,7 +16,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from scan import WEB_DEMO_ATTACK_IDS, run_web_scan, serialize_scan_result
+from scan import (
+    WEB_DEMO_ATTACK_IDS,
+    run_ensemble_judging,
+    run_web_scan,
+    serialize_scan_result,
+    web_ensemble_enabled,
+)
 
 from promptshield import __version__ as promptshield_version
 from promptshield.models import Attack
@@ -126,7 +132,12 @@ async def _scan_event_stream(system_prompt: str) -> AsyncIterator[str]:
     async def _run() -> None:
         try:
             scan = await run_web_scan(system_prompt, on_progress)
-            queue.put_nowait({"type": "done", "result": serialize_scan_result(scan)})
+            if web_ensemble_enabled():
+                ensemble = await run_ensemble_judging(scan)
+                result = serialize_scan_result(scan, ensemble_verdicts=ensemble)
+            else:
+                result = serialize_scan_result(scan)
+            queue.put_nowait({"type": "done", "result": result})
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as an error event
             queue.put_nowait({"type": "error", "message": str(exc)})
         finally:

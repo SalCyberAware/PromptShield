@@ -7,13 +7,21 @@ regression guard for the "scan exception must close cleanly" requirement).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import scan
 from fastapi.testclient import TestClient
 from main import app
-from scan import load_web_demo_attacks, serialize_scan_result
+from scan import (
+    load_web_demo_attacks,
+    run_ensemble_judging,
+    serialize_scan_result,
+    web_ensemble_enabled,
+)
 
 from promptshield.models import (
     AnalyzerVerdict,
@@ -438,3 +446,263 @@ class TestSerializeScanStatuses:
     def test_no_api_key_pattern_in_payload(self) -> None:
         result = serialize_scan_result(_scan_from_kinds(["vulnerable", "held"]))
         assert "sk-" not in json.dumps(result)
+
+
+# ── Ensemble mode (slice 3c) ────────────────────────────────────────────────────
+
+
+def _scan_with_responses(specs: list[tuple[str, str]]) -> Scan:
+    """Build a Scan with one transcript per (attack_id, response). No findings.
+
+    Ensemble projection reads the target response and the supplied judge verdicts,
+    not the engine's findings, so transcripts are all it needs.
+    """
+    transcripts = [
+        Transcript(
+            attack_id=aid,
+            attack_name=f"Attack {aid}",
+            owasp_category="LLM01",
+            severity=Severity.HIGH,
+            prompt="do the bad thing",
+            response=response,
+            analyzers_run=["pattern_analyzer"],
+        )
+        for aid, response in specs
+    ]
+    return Scan(
+        scan_id="web-ensemble",
+        target=TargetConfig(
+            url="internal://gpt-4o-mini", target_type=TargetType.SYSTEM_PROMPT
+        ),
+        status=ScanStatus.COMPLETED,
+        attacks_total=len(specs),
+        attacks_run=len(specs),
+        findings=[],
+        transcripts=transcripts,
+        library_version="1.1.0",
+        analyzers_used=["pattern_analyzer"],
+    )
+
+
+def _judge_verdict(analyzer: str, vulnerable: bool, score: float) -> dict:
+    return {
+        "analyzer": analyzer,
+        "vulnerable": vulnerable,
+        "confidence_score": score,
+        "reasoning": f"{analyzer} reasoning",
+        "errored": False,
+    }
+
+
+def _mock_judge(name: str, verdict: AnalyzerVerdict | None = None, raises: bool = False):
+    judge = type("J", (), {})()
+    judge.name = name
+    if raises:
+
+        async def _raise(_attack, _response):
+            raise RuntimeError("judge outage")
+
+        judge.analyze = _raise
+    else:
+
+        async def _ok(_attack, _response, _v=verdict):
+            return _v
+
+        judge.analyze = _ok
+    return judge
+
+
+class TestEnsembleFlag:
+    def test_flag_off_by_default(self) -> None:
+        assert web_ensemble_enabled() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_flag_truthy_values(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROMPTSHIELD_WEB_ENSEMBLE", value)
+        assert web_ensemble_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "off", "", "nope"])
+    def test_flag_falsy_values(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROMPTSHIELD_WEB_ENSEMBLE", value)
+        assert web_ensemble_enabled() is False
+
+    def test_run_web_scan_uses_pattern_only_when_ensemble_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ensemble on: the scan runs pattern-only; judges run separately later."""
+        monkeypatch.setenv("PROMPTSHIELD_WEB_ENSEMBLE", "1")
+        instance = MagicMock()
+        instance.run_scan = AsyncMock(return_value="SCAN")
+        monkeypatch.setattr(scan, "SystemPromptScanner", MagicMock(return_value=instance))
+        # If this were called and forwarded, the assertion below would fail.
+        monkeypatch.setattr(scan, "build_web_analyzers", lambda: ["SHOULD_NOT_FORWARD"])
+
+        asyncio.run(scan.run_web_scan("prompt"))
+
+        assert instance.run_scan.await_args.kwargs["analyzers"] == []
+
+
+class TestEnsembleSerialization:
+    def test_two_judges_agree_vulnerable(self) -> None:
+        s = _scan_with_responses([("PS-1", "here is the leak")])
+        verdicts = {
+            "PS-1": [
+                _judge_verdict("claude_analyzer", True, 0.8),
+                _judge_verdict("gemini_analyzer", True, 0.92),
+            ]
+        }
+        entry = serialize_scan_result(s, ensemble_verdicts=verdicts)["results"][0]
+        assert entry["status"] == "vulnerable"
+        assert entry["aggregate"]["agreement"] == "agree"
+        assert entry["aggregate"]["final_vulnerable"] is True
+        assert entry["aggregate"]["final_confidence"] == 0.92  # higher of the two
+        assert entry["confidence_band"] == "high"
+        assert len(entry["verdicts"]) == 2
+
+    def test_two_judges_agree_held(self) -> None:
+        s = _scan_with_responses([("PS-1", "I cannot help")])
+        verdicts = {
+            "PS-1": [
+                _judge_verdict("claude_analyzer", False, 0.9),
+                _judge_verdict("gemini_analyzer", False, 0.85),
+            ]
+        }
+        entry = serialize_scan_result(s, ensemble_verdicts=verdicts)["results"][0]
+        assert entry["status"] == "held"
+        assert entry["aggregate"]["agreement"] == "agree"
+        assert entry["aggregate"]["final_vulnerable"] is False
+        assert entry["confidence_score"] is None
+
+    def test_two_judges_disagree_is_needs_review(self) -> None:
+        s = _scan_with_responses([("PS-1", "ambiguous reply")])
+        verdicts = {
+            "PS-1": [
+                _judge_verdict("claude_analyzer", True, 0.8),
+                _judge_verdict("gemini_analyzer", False, 0.7),
+            ]
+        }
+        entry = serialize_scan_result(s, ensemble_verdicts=verdicts)["results"][0]
+        assert entry["status"] == "needs_review"
+        assert entry["aggregate"]["agreement"] == "disagree"
+        assert entry["aggregate"]["final_vulnerable"] is None
+        assert entry["needs_manual_review"] is True
+        assert entry["response_excerpt"] is not None
+
+    def test_one_judge_working_is_single(self) -> None:
+        s = _scan_with_responses([("PS-1", "the leak")])
+        verdicts = {"PS-1": [_judge_verdict("claude_analyzer", True, 0.8)]}
+        entry = serialize_scan_result(s, ensemble_verdicts=verdicts)["results"][0]
+        assert entry["status"] == "vulnerable"
+        assert entry["aggregate"]["agreement"] == "single"
+        assert entry["judged_by"] == "claude_analyzer"
+
+    def test_both_judges_errored_is_not_ai_judged_never_held(self) -> None:
+        s = _scan_with_responses([("PS-1", "a normal reply")])
+        result = serialize_scan_result(s, ensemble_verdicts={"PS-1": []})
+        entry = result["results"][0]
+        assert entry["status"] == "not_ai_judged"
+        assert entry["ai_judged"] is False
+        assert result["summary"]["by_status"]["held"] == 0
+
+    def test_target_error_is_error(self) -> None:
+        s = _scan_with_responses([("PS-1", "[ERROR] 429 quota")])
+        entry = serialize_scan_result(s, ensemble_verdicts={"PS-1": []})["results"][0]
+        assert entry["status"] == "error"
+
+    def test_error_and_not_ai_judged_never_counted_as_held(self) -> None:
+        s = _scan_with_responses(
+            [("PS-1", "[ERROR] boom"), ("PS-2", "a normal reply")]
+        )
+        result = serialize_scan_result(
+            s, ensemble_verdicts={"PS-1": [], "PS-2": []}
+        )
+        by_status = result["summary"]["by_status"]
+        assert by_status["held"] == 0
+        assert by_status["error"] == 1
+        assert by_status["not_ai_judged"] == 1
+
+
+class TestRunEnsembleJudging:
+    def test_collects_both_working_verdicts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        aid = load_web_demo_attacks()[0].id
+        claude = _mock_judge(
+            "claude_analyzer",
+            AnalyzerVerdict(analyzer_name="claude_analyzer", success=True, confidence_score=0.9, reasoning="leak"),
+        )
+        gemini = _mock_judge(
+            "gemini_analyzer",
+            AnalyzerVerdict(analyzer_name="gemini_analyzer", success=False, confidence_score=0.8, reasoning="held"),
+        )
+        monkeypatch.setattr(scan, "build_web_analyzers", lambda: [claude, gemini])
+
+        s = _scan_with_responses([(aid, "the target reply")])
+        verdicts = asyncio.run(run_ensemble_judging(s))
+
+        assert [v["analyzer"] for v in verdicts[aid]] == ["claude_analyzer", "gemini_analyzer"]
+        assert verdicts[aid][0]["vulnerable"] is True
+        assert verdicts[aid][1]["vulnerable"] is False
+
+    def test_drops_errored_judge_uses_working_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        aid = load_web_demo_attacks()[0].id
+        claude = _mock_judge(
+            "claude_analyzer",
+            AnalyzerVerdict(analyzer_name="claude_analyzer", success=True, confidence_score=0.9, reasoning="leak"),
+        )
+        # Gemini returns the 0.0 error sentinel (e.g. a 429).
+        gemini = _mock_judge(
+            "gemini_analyzer",
+            AnalyzerVerdict(
+                analyzer_name="gemini_analyzer",
+                success=False,
+                confidence_score=0.0,
+                reasoning="Analyzer error: 429",
+            ),
+        )
+        monkeypatch.setattr(scan, "build_web_analyzers", lambda: [claude, gemini])
+
+        s = _scan_with_responses([(aid, "the target reply")])
+        verdicts = asyncio.run(run_ensemble_judging(s))
+
+        assert [v["analyzer"] for v in verdicts[aid]] == ["claude_analyzer"]
+
+    def test_drops_raising_judge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        aid = load_web_demo_attacks()[0].id
+        claude = _mock_judge(
+            "claude_analyzer",
+            AnalyzerVerdict(analyzer_name="claude_analyzer", success=True, confidence_score=0.9, reasoning="leak"),
+        )
+        gemini = _mock_judge("gemini_analyzer", raises=True)
+        monkeypatch.setattr(scan, "build_web_analyzers", lambda: [claude, gemini])
+
+        s = _scan_with_responses([(aid, "the target reply")])
+        verdicts = asyncio.run(run_ensemble_judging(s))
+
+        assert [v["analyzer"] for v in verdicts[aid]] == ["claude_analyzer"]
+
+    def test_skips_errored_target_without_calling_judges(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        aid = load_web_demo_attacks()[0].id
+        called = {"n": 0}
+
+        def _factory():
+            judge = type("J", (), {})()
+            judge.name = "claude_analyzer"
+
+            async def _analyze(_a, _r):
+                called["n"] += 1
+                return AnalyzerVerdict(
+                    analyzer_name="claude_analyzer", success=True, confidence_score=0.9
+                )
+
+            judge.analyze = _analyze
+            return [judge]
+
+        monkeypatch.setattr(scan, "build_web_analyzers", _factory)
+        s = _scan_with_responses([(aid, "[ERROR] target down")])
+        verdicts = asyncio.run(run_ensemble_judging(s))
+
+        assert verdicts[aid] == []
+        assert called["n"] == 0  # no judge spend on an errored target
