@@ -1,8 +1,8 @@
 # PromptShield Web Architecture
 
-> Phase 0 design doc for Epic #1. No code in this commit — this is the build guide
-> the next session starts from. Detection core (engine, 4-tier cascade, 50-attack
-> library, 229 tests) shipped in **v0.4.0**; everything below is the web wrapper + deploy.
+> Phase 0 design doc for Epic #1, kept current as the web wrapper shipped. Detection
+> core (engine, 4-tier cascade, 50-attack library, 239 package tests) shipped in
+> **v0.4.0**; the web wrapper + deploy below shipped in **v0.5.0**.
 
 ## Goal
 
@@ -180,7 +180,7 @@ PromptShield/
 ├── promptshield/        # published package + CLI — UNCHANGED contract
 │   ├── analyzers/        # pattern + claude/openai/gemini/ollama
 │   ├── attacks/          # library.py + data/attacks_v1.yaml (50 attacks)
-│   ├── engines/          # base.py, api_scanner.py, + system_prompt_scanner.py (NEW)
+│   ├── engines/          # base.py, api_scanner.py, system_prompt_scanner.py
 │   ├── reporters/        # html + json
 │   ├── models.py
 │   └── cli.py
@@ -192,7 +192,7 @@ PromptShield/
 │   ├── pytest.ini
 │   ├── requirements.txt
 │   └── tests/
-├── frontend/            # NEW — React + Vite
+├── frontend/            # React + Vite
 │   ├── src/
 │   └── package.json
 ├── docs/WEB_ARCHITECTURE.md
@@ -213,10 +213,21 @@ FastAPI, importing `promptshield`. Endpoints:
   - `progress` — one per attack, driven by the existing `on_progress(current, total, attack)`
     callback: `{ type:"progress", current, total, attack_id, owasp_category }`.
   - `done` — `{ type:"done", result }` where `result` is a **curated** projection
-    (no raw target responses): per-attack `{ attack_id, name, owasp_category, severity,
-    payload, vulnerable, confidence, confidence_score, analyzer_reasoning,
-    needs_manual_review }` plus a `summary` (passed/failed, breakdown by severity and
-    OWASP category, target model).
+    (built by `serialize_scan_result` in `backend/scan.py`, slice 3a). No raw target
+    response is returned — only a bounded `response_excerpt`. Each attack carries an
+    explicit `status` (one of `vulnerable`, `held`, `needs_review`, `error`,
+    `not_ai_judged`) instead of a binary flag:
+    `{ attack_id, name, owasp_category, severity, payload, status, ai_judged,
+    judged_by, confidence_score, confidence_band, needs_manual_review,
+    response_excerpt, verdicts, aggregate }`, where `verdicts` is a list of
+    `{ analyzer, vulnerable, confidence_score, reasoning, errored }` (one entry in
+    single-judge mode, two when the ensemble flag is on) and `aggregate` is
+    `{ status, agreement, final_vulnerable, final_confidence }`. The top-level
+    `summary` carries `{ target_model, analyzers_used, by_status, by_severity,
+    by_owasp_category, failed, passed }`. **Honesty rule:** `error` and
+    `not_ai_judged` are never bucketed as `held`; `passed` counts only AI-confirmed
+    defenses (`by_status["held"]`) and `failed` only AI-confirmed got-throughs
+    (`by_status["vulnerable"]`).
   - `error` — `{ type:"error", message }`, emitted if the scan raises; the stream then
     closes cleanly (also the slot for future rate-limit / budget-cap rejects).
 
@@ -244,27 +255,36 @@ React + Vite, styled to match SOCTriage / ThreatScan.
 - Server-side keys as **Railway environment variables**, never shipped to the client.
 - **CORS** locked to the Vercel production domain (and preview domains as needed).
 
-Env vars (Railway):
-- `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` — only what the chosen
-  target model + single demo analyzer actually need.
-- `WEB_TARGET_MODEL` — e.g. `gpt-4o-mini`.
-- `WEB_RATE_LIMIT_PER_IP`, `WEB_MAX_PROMPT_CHARS`, `WEB_DAILY_BUDGET_USD` — abuse knobs.
-- `FRONTEND_ORIGIN` — CORS allowlist.
+Env vars (Railway) — the exact names the backend reads (see `backend/.env.example`):
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — provider keys for the
+  target model + the Claude/Gemini analyzer cascade. Only set what you use;
+  `/api/health` reports which are configured (booleans only, never values).
+- `PROMPTSHIELD_TARGET_MODEL` — target model, defaults to `gpt-4o-mini`.
+- `PROMPTSHIELD_WEB_IP_RATE`, `PROMPTSHIELD_WEB_IP_WINDOW_SECONDS`,
+  `PROMPTSHIELD_WEB_MAX_PROMPT_CHARS`, `PROMPTSHIELD_WEB_DAILY_CAP` — abuse knobs
+  (defaults live in `backend/limits.py`).
+- `PROMPTSHIELD_WEB_ENSEMBLE` — off by default; set truthy to run both judges on
+  every attack (doubles judge cost). Keep **off** for the public demo.
+- `FRONTEND_URL` — CORS allowlist (the deployed frontend origin).
 
-Frontend env: `VITE_API_BASE_URL` → the Railway backend URL.
+Frontend env: `VITE_API_URL` → the Railway backend URL.
 
-## CI (note, don't implement)
+## CI
 
-Existing `.github/workflows/ci.yml` jobs run against the package only:
-- **test** — pytest matrix on Python 3.11 / 3.12 / 3.13 (+ Codecov on 3.13).
+`.github/workflows/ci.yml` runs **6 jobs**, all green on `main`:
+- **test** — pytest matrix on Python 3.11 / 3.12 / 3.13 (+ Codecov on 3.13). *(3 jobs)*
 - **lint** — `ruff check promptshield/ tests/`.
 - **typecheck** — `mypy promptshield/` (strict).
+- **backend** — clean **production** install (`pip install .` from repo root, then
+  `backend/requirements-dev.txt`) followed by `pytest backend/tests`. This is the
+  gate that proves the web wrapper works against the packaged engine, not an
+  editable-parent tree.
 
-Extend with:
-- a **backend test job** (`pytest backend/tests`, plus ruff/mypy over `backend/`), and
-- a **frontend build job** (`npm ci && npm run build` in `frontend/`).
+The existing package jobs are kept as-is so the published package's gate is unchanged.
 
-Keep the existing package jobs as-is so the published package's gate is unchanged.
+**Not yet done:** no **frontend build job** (`npm ci && npm run build` in `frontend/`)
+and no ruff/mypy pass over `backend/` — both are candidate CI additions, not yet
+implemented.
 
 ## Phase sequence (mirrors Epic #1)
 
