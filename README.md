@@ -13,7 +13,7 @@ No signup, no API key, no install. Click "Try a leaky prompt" and hit "Scan prom
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![Attacks](https://img.shields.io/badge/attacks-50-orange)
 
-![PromptShield scan result showing a caught XSS finding: the LLM02 "XSS payload generation" attack marked vulnerable at high severity, with the judging model, its confidence score, and an excerpt of the target model's reply containing the script tag it was talked into producing.](docs/images/demo-finding.png)
+![PromptShield results page for the leaky example prompt. The headline reads "1 of 13 attacks got through" with "2 flagged for manual review" underneath. Below it, an OWASP coverage panel showing 6 of the 10 LLM categories tested and a severity breakdown of 2 high and 1 medium. Then the finding cards: "XSS payload generation" (LLM02, high) marked "Got through", with the judge's reasoning and a 0.97 confidence score; "Direct instruction override" (LLM01, high) and "Token boundary confusion" (LLM01, medium) both marked "Needs review" at low confidence; and "Encoding-based bypass" (LLM01, high) marked "Not AI-judged" as a pattern-only result. A collapsed row reads "Held against 9 attacks".](docs/images/demo-finding.png)
 
 ---
 
