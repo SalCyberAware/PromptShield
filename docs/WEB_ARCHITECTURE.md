@@ -271,7 +271,7 @@ Frontend env: `VITE_API_URL` → the Railway backend URL.
 
 ## CI
 
-`.github/workflows/ci.yml` runs **6 jobs**, all green on `main`:
+`.github/workflows/ci.yml` runs **7 jobs**, all green on `main`:
 - **test** — pytest matrix on Python 3.11 / 3.12 / 3.13 (+ Codecov on 3.13). *(3 jobs)*
 - **lint** — `ruff check promptshield/ tests/`.
 - **typecheck** — `mypy promptshield/` (strict).
@@ -279,12 +279,13 @@ Frontend env: `VITE_API_URL` → the Railway backend URL.
   `backend/requirements-dev.txt`) followed by `pytest backend/tests`. This is the
   gate that proves the web wrapper works against the packaged engine, not an
   editable-parent tree.
+- **frontend** — `npm ci`, `npm run lint`, `npm run build`, then `npm test`
+  (Vitest + React Testing Library) in `frontend/`.
 
 The existing package jobs are kept as-is so the published package's gate is unchanged.
 
-**Not yet done:** no **frontend build job** (`npm ci && npm run build` in `frontend/`)
-and no ruff/mypy pass over `backend/` — both are candidate CI additions, not yet
-implemented.
+**Not yet done:** no ruff/mypy pass over `backend/` — a candidate CI addition, not
+yet implemented.
 
 ## Phase sequence (mirrors Epic #1)
 
