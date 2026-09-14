@@ -1,0 +1,168 @@
+name: Security
+
+# Tier 1 of docs/AUTOMATION_PLAN.md: scanners that only report.
+#
+# Nothing in this workflow modifies a file, opens a pull request, or touches
+# production. Each scanner is its own job so that a red check names the scanner
+# that found something instead of pointing at a single "security" blob.
+#
+# Kept separate from ci.yml on purpose. A scanner going red is a different
+# signal from the build going red, and the two should be readable apart.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Mondays at 06:00 UTC. Push and pull request triggers only fire
+    # when the code changes. A CVE disclosed against a dependency that has not
+    # changed in months would never surface without a scheduled run.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (Python dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      # Deliberately unpinned. Advisory data comes from the PyPI service at run
+      # time rather than from the tool, so a current pip-audit is what keeps the
+      # detection logic fresh. Pinning it would freeze the scanner while the
+      # thing it scans for keeps moving.
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      # The engine and the web wrapper are installed as two separate things in
+      # production (`pip install .` then `pip install -r backend/requirements.txt`,
+      # see railway.json), so they are audited as two separate things here.
+      # Two steps rather than two jobs: the step name is enough to identify which
+      # tree is dirty, and the setup cost is paid once.
+      - name: Audit the root package dependency tree
+        run: pip-audit . --progress-spinner off
+
+      - name: Audit backend/requirements.txt
+        run: pip-audit -r backend/requirements.txt --progress-spinner off
+
+  npm-audit:
+    name: npm audit (frontend production tree)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # Why --omit=dev:
+      #
+      # The dev tree here is the Vite and ESLint build toolchain. It runs on a
+      # CI runner and on a developer's laptop. It is never served to a browser
+      # and never present in the deployed bundle, so an advisory against a
+      # transitive build dependency is not a vulnerability in the shipped
+      # product. As of 2026-09-13 the full tree carries 6 such findings (5 high,
+      # 1 moderate: brace-expansion, browserslist, js-yaml, nanoid, postcss,
+      # baseline-browser-mapping), all transitive, all denial-of-service or
+      # local path traversal in tooling. The production tree carries zero.
+      #
+      # Including them would make this job permanently red for reasons nobody
+      # can act on except by waiting for an upstream release, and a check that
+      # is red for unactionable reasons is a check that gets ignored. That is
+      # the exact failure this plan exists to prevent, so the scope is narrowed
+      # to what ships instead of the threshold being raised to hide it.
+      #
+      # Dev-tree findings are not dropped on the floor. They surface as
+      # dependency update pull requests once Tier 2 is switched on, and any
+      # developer running a bare `npm audit` sees them immediately.
+      #
+      # No `npm ci` step: npm audit resolves the tree from package-lock.json and
+      # does not need node_modules on disk.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  gitleaks:
+    name: gitleaks (secret scanning, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with full history
+        uses: actions/checkout@v6
+        with:
+          # A secret that was committed and later deleted is still in the
+          # history and still compromised. The default shallow clone would scan
+          # only the tip and report a clean repo either way.
+          fetch-depth: 0
+
+      # Installed from the pinned release and checksum-verified rather than
+      # pulled from a floating action tag. This repo's sibling already carries
+      # one disabled supply-chain check as technical debt (see the plan), so a
+      # binary downloaded during a build gets verified here.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.28.0"
+          GITLEAKS_SHA256: "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb"
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # --redact matters because this is a public repository: the Actions log is
+      # world-readable, and a finding printed in full would republish the secret
+      # to a second place. The rule name, file, and commit are enough to act on.
+      - name: Scan the full git history
+        run: gitleaks git . --redact --verbose
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript-typescript"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      # Both languages are interpreted, so there is no build step to run.
+      #
+      # Note on reading this job: a green check here means the analysis ran, not
+      # that it found nothing. CodeQL uploads alerts to the Security tab and does
+      # not fail the workflow on them by design, which is what the plan asks for
+      # while the backlog is unknown. Triage the Security tab weekly; do not read
+      # this checkmark as an all-clear.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
