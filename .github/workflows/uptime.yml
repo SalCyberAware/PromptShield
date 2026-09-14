@@ -1,0 +1,92 @@
+name: Uptime
+
+# Tier 1.4 of docs/AUTOMATION_PLAN.md: external uptime and health monitoring.
+#
+# Watches all six deployed surfaces across the three portfolio projects from one
+# place. This repo is where the plan lives, so this is where the monitor lives;
+# the other two repos are watched from here rather than each carrying a copy.
+#
+# Every service is its own step, so a red run names the service that is down
+# instead of saying "uptime failed". Every step runs even after an earlier one
+# fails, so one outage does not hide the next.
+#
+# Read-only, unauthenticated, no secrets. These are the same public URLs any
+# visitor hits. Nothing here deploys, writes, or changes state.
+
+on:
+  schedule:
+    # Every 15 minutes. This repo is public, so Actions minutes are unmetered
+    # and the interval costs nothing. See the note in the plan on what this
+    # interval does and does not catch.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  uptime:
+    name: Uptime and health
+    runs-on: ubuntu-latest
+    # No checkout step: every check is an outbound HTTP request and needs
+    # nothing from the repository.
+    env:
+      # 3 attempts before a service is called down, so one dropped connection
+      # or one cold start does not raise a false alarm. A service that is
+      # genuinely down fails all three.
+      CURL_OPTS: "--silent --show-error --location --max-time 20 --retry 2 --retry-delay 5 --retry-all-errors"
+    steps:
+      - name: PromptShield backend (/api/health)
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://promptshield-production-1846.up.railway.app/api/health")
+          echo "HTTP $code"; cat body.txt; echo
+          test "$code" = "200"
+          grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' body.txt
+
+      - name: PromptShield frontend
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://prompt-shield-mocha.vercel.app")
+          echo "HTTP $code"
+          test "$code" = "200"
+
+      - name: SOCTriage backend (/health)
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://soctriage-production.up.railway.app/health")
+          echo "HTTP $code"; cat body.txt; echo
+          test "$code" = "200"
+          grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' body.txt
+
+      - name: SOCTriage frontend
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://soctriage.vercel.app")
+          echo "HTTP $code"
+          test "$code" = "200"
+
+      # URL note: ThreatScan's own README documents the Vercel frontend but only
+      # shows a placeholder for the Railway backend. This backend URL comes from
+      # SOCTriage's README, where it is the configured THREATSCAN_API_URL, and it
+      # was confirmed live before this workflow was committed.
+      - name: ThreatScan backend (/api/health)
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://threatscan-production.up.railway.app/api/health")
+          echo "HTTP $code"; cat body.txt; echo
+          test "$code" = "200"
+          grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' body.txt
+
+      - name: ThreatScan frontend
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
+            "https://threat-scan.vercel.app")
+          echo "HTTP $code"
+          test "$code" = "200"

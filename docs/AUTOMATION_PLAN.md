@@ -2,8 +2,9 @@
 
 **Scope:** PromptShield, ThreatScan, SOCTriage (github.com/SalCyberAware)
 **Written:** 2026-09-13
-**Status:** Tier 1 is implemented on PromptShield only (`.github/workflows/security.yml`, all jobs
-green as of 2026-09-13). Everything else on this page is still a plan.
+**Status:** Tier 1 is complete, hosted in PromptShield (`security.yml` and `uptime.yml`, all jobs
+green as of 2026-09-14). The uptime monitor covers all three projects; the scanners cover
+PromptShield only. Tiers 2 and 3, deploy verification, and the enterprise gaps are still plans.
 
 ---
 
@@ -124,11 +125,31 @@ September failure on the day it happened rather than three months later.
 
 ### 1.5 Implementation status
 
-**PromptShield: 1.1, 1.2 and 1.3 are live** in `.github/workflows/security.yml` as of 2026-09-13.
-Five jobs, all green on first run, alongside the seven existing `ci.yml` jobs which were not touched.
-**1.4 (uptime monitoring) is not done**, and it remains the highest-value item on this page.
+**1.1, 1.2 and 1.3 are live for PromptShield** in `.github/workflows/security.yml` as of
+2026-09-13. Five jobs, all green on first run, alongside the seven existing `ci.yml` jobs, which
+were not touched. ThreatScan and SOCTriage have none of the scanners yet.
 
-ThreatScan and SOCTriage have none of Tier 1 yet.
+**1.4 is live for all three projects** in `.github/workflows/uptime.yml` as of 2026-09-14. Six
+checks on a 15 minute schedule plus manual dispatch: a backend health endpoint and a frontend for
+each project. Each service is its own step, so a red run names what is down, and every step runs
+even after an earlier one fails so one outage cannot hide the next. Read-only and unauthenticated;
+no secrets. It lives in PromptShield because that is where this plan lives, and it watches the other
+two repos from here rather than each carrying a copy.
+
+**What the 15 minute interval does and does not buy.** This repository is public, so Actions minutes
+are unmetered and the interval costs nothing. Two limits are worth knowing rather than discovering
+later:
+
+- GitHub disables scheduled workflows in a public repository after 60 days with no repository
+  activity. A monitor that quietly stops after two idle months is exactly the failure this plan
+  exists to prevent, so treat a long quiet spell as a reason to check that the schedule still runs.
+- Scheduled runs are best-effort and get delayed under load, so detection is on the order of tens of
+  minutes. This catches a sustained outage, a bad deploy, and a service that fails to restart. It
+  will not catch a brief blip, and it is not a substitute for a dedicated uptime service if
+  minute-level detection ever matters.
+
+Were this repository private, the same interval would cost roughly 2,880 billed minutes a month
+against a 2,000 minute free allowance. A 30 minute interval would fit inside it.
 
 Two deliberate deviations from what 1.1 specifies above, both made because the measured noise level
 turned out to be zero:
@@ -251,7 +272,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
-| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
+| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
 | **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
 | **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
@@ -262,7 +283,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Unverified. Not determinable from the repo, and not checked on the platform | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
 | **Railway build health** | Building and deploying (platform-verified) | Unverified | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
-| **Monitoring** | **None.** No uptime check, no alerting, no error tracking found | **None** | **None** |
+| **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend | Same monitor, run from PromptShield's `uptime.yml` | Same monitor, run from PromptShield's `uptime.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
 | **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | **None** | **None** |
 | **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | **None** | **None** |
@@ -442,15 +463,17 @@ The sequence answers one question: what is the cheapest thing that would have ca
 failure? Everything that closes the visibility gap comes before everything that improves code
 quality, because the audit did not find a code quality problem. It found a blindness problem.
 
-**Step 1. External uptime and health monitoring on all six deployed surfaces.**
+**Step 1. External uptime and health monitoring on all six deployed surfaces. DONE 2026-09-14.**
 First because it is the only item that catches a live outage today, with no code change and no CI
-change. Three backends, three frontends, five-minute interval, alerts routed somewhere a human
-reads. This is an afternoon of work and it closes the largest hole.
+change. Three backends, three frontends, alerts going to the repository owner on failure. Shipped as
+`uptime.yml` on a 15 minute schedule rather than the five minutes sketched here, for the reasons in
+1.5. All six surfaces were confirmed healthy at the time it went in.
 
-**Step 2. Secret scanning (gitleaks) across all three repos.**
+**Step 2. Secret scanning (gitleaks) across all three repos. DONE for PromptShield 2026-09-13.**
 Second because it is the highest-severity thing that could already be wrong with nobody knowing.
 Unlike the other scanners, a finding here is an emergency rather than a backlog item, and the
-full-history scan either finds something or permanently retires the worry.
+full-history scan either finds something or permanently retires the worry. PromptShield's history is
+clean across all 108 commits. ThreatScan and SOCTriage are still unscanned.
 
 **Step 3. Build identity in every health response, then post-deploy verification.**
 Third because it needs a code change in all three repos (the commit SHA plumbing) and is therefore
