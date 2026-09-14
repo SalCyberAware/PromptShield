@@ -253,7 +253,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 |---|---|---|---|
 | **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
 | **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
-| **Backend tests** | 239 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
+| **Backend tests** | 251 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
 | **Type checking** | Yes, mypy strict on `promptshield/` | No | No |

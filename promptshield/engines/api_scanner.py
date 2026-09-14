@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import (
@@ -55,12 +56,50 @@ class APIProvider(str, Enum):
     CUSTOM = "custom"
 
 
+def _url_host(url: str) -> str:
+    """Return the lowercased host of ``url``, or an empty string if it has none.
+
+    ``urlsplit().hostname`` lowercases the host and drops any userinfo and port,
+    so ``https://user@API.Anthropic.com:443/v1`` resolves to ``api.anthropic.com``.
+    A URL written without a scheme still names a host, so it is reparsed as a
+    protocol-relative URL rather than being read as a bare path.
+    """
+    try:
+        host = urlsplit(url).hostname
+        if not host:
+            host = urlsplit("//" + url).hostname
+    except ValueError:
+        # Unparseable, e.g. a malformed IPv6 literal. No host worth trusting.
+        return ""
+    return host or ""
+
+
+def _host_is(host: str, domain: str) -> bool:
+    """Return True if ``host`` is ``domain`` itself or a subdomain of it.
+
+    Matching on the dot boundary is the point. A substring test against the whole
+    URL accepts ``anthropic.com.example.net`` (a lookalike domain someone else
+    controls) and ``example.net/?ref=anthropic.com`` (the name appearing in a
+    query string), neither of which is Anthropic.
+    """
+    return host == domain or host.endswith("." + domain)
+
+
 def detect_provider(url: str) -> APIProvider:
-    """Best-effort detection of the API provider from a URL."""
+    """Best-effort detection of the API provider from a URL.
+
+    Host checks compare the parsed host. Path checks stay substring tests against
+    the whole URL on purpose: an OpenAI-compatible or Anthropic-compatible server
+    is identified by the endpoint shape it exposes, wherever it happens to be
+    hosted, which is why ``https://compatible.example.com/chat/completions``
+    should still be detected as OpenAI.
+    """
     url_lower = url.lower()
-    if "anthropic.com" in url_lower or "/v1/messages" in url_lower:
+    host = _url_host(url)
+
+    if _host_is(host, "anthropic.com") or "/v1/messages" in url_lower:
         return APIProvider.ANTHROPIC
-    if "openai.com" in url_lower or "/chat/completions" in url_lower:
+    if _host_is(host, "openai.com") or "/chat/completions" in url_lower:
         return APIProvider.OPENAI
     return APIProvider.CUSTOM
 

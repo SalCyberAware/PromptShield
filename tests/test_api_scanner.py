@@ -42,6 +42,68 @@ class TestProviderDetection:
         assert detect_provider("https://unknown-api.example.com/api/llm") == APIProvider.CUSTOM
 
 
+class TestProviderDetectionHostMatching:
+    """Host detection must match on a dot boundary, not on a substring of the URL.
+
+    These URLs all contain the literal text "anthropic.com" or "openai.com" but
+    only some of them are actually served by that provider. A substring test over
+    the whole URL cannot tell the difference; CodeQL flagged exactly that as
+    py/incomplete-url-substring-sanitization.
+
+    Every URL here avoids /v1/messages and /chat/completions on purpose, so that
+    the path checks cannot mask a broken host check and let these pass.
+    """
+
+    def test_bare_apex_domain_matches(self) -> None:
+        """anthropic.com itself is Anthropic."""
+        assert detect_provider("https://anthropic.com/v1/complete") == APIProvider.ANTHROPIC
+
+    def test_subdomain_matches(self) -> None:
+        """api.anthropic.com is a subdomain of anthropic.com, so it is Anthropic."""
+        assert detect_provider("https://api.anthropic.com/v1/complete") == APIProvider.ANTHROPIC
+
+    def test_lookalike_suffix_domain_does_not_match(self) -> None:
+        """anthropic.com.example.net is controlled by example.net, not Anthropic."""
+        assert detect_provider("https://anthropic.com.example.net/v1/complete") == APIProvider.CUSTOM
+
+    def test_domain_in_query_string_does_not_match(self) -> None:
+        """The name appearing in a query string says nothing about who serves the URL."""
+        assert detect_provider("https://example.net/?ref=anthropic.com") == APIProvider.CUSTOM
+
+    def test_domain_in_path_does_not_match(self) -> None:
+        """Nor does the name appearing in a path segment."""
+        assert detect_provider("https://example.net/anthropic.com/v1/complete") == APIProvider.CUSTOM
+
+    def test_openai_subdomain_matches(self) -> None:
+        """The same rules apply to the OpenAI branch."""
+        assert detect_provider("https://api.openai.com/v1/completions") == APIProvider.OPENAI
+
+    def test_openai_lookalike_suffix_domain_does_not_match(self) -> None:
+        """openai.com.example.net is not OpenAI."""
+        assert detect_provider("https://openai.com.example.net/v1/completions") == APIProvider.CUSTOM
+
+    def test_openai_domain_in_query_string_does_not_match(self) -> None:
+        """openai.com in a query string is not OpenAI."""
+        assert detect_provider("https://example.net/?ref=openai.com") == APIProvider.CUSTOM
+
+    def test_host_match_ignores_case_port_and_userinfo(self) -> None:
+        """The host is compared after urlsplit normalizes case and strips port and userinfo."""
+        assert detect_provider("https://user@API.Anthropic.COM:443/v1/complete") == APIProvider.ANTHROPIC
+
+    def test_schemeless_url_still_resolves_its_host(self) -> None:
+        """A URL written without a scheme still names a host in the same place."""
+        assert detect_provider("api.anthropic.com/v1/complete") == APIProvider.ANTHROPIC
+
+    def test_malformed_url_falls_back_to_custom(self) -> None:
+        """An unparseable URL has no host to trust, and must not raise."""
+        assert detect_provider("https://[not-an-ipv6/v1/complete") == APIProvider.CUSTOM
+
+    def test_path_detection_still_works_for_compatible_servers(self) -> None:
+        """Path-shape detection is unchanged: a compatible server anywhere is still detected."""
+        assert detect_provider("https://compatible.example.net/v1/messages") == APIProvider.ANTHROPIC
+        assert detect_provider("https://compatible.example.net/chat/completions") == APIProvider.OPENAI
+
+
 class TestPayloadBuilding:
     """Tests for request payload construction."""
 
