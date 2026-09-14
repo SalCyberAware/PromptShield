@@ -253,7 +253,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 |---|---|---|---|
 | **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
 | **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
-| **Backend tests** | 251 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
+| **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
 | **Type checking** | Yes, mypy strict on `promptshield/` | No | No |
@@ -333,13 +333,19 @@ appears in a query string.
 
 **The fix** parses the URL and compares the host, matching the domain itself or a subdomain on the
 dot boundary. `urlsplit().hostname` also normalizes case and strips userinfo and port, and a
-malformed URL now resolves to no host rather than raising. The path checks for `/v1/messages` and
-`/chat/completions` are unchanged: those are legitimate shape detection, since a compatible server
-is identified by the endpoint it exposes wherever it is hosted.
+malformed URL now resolves to no host rather than raising.
 
-Twelve tests cover it. The five bypass cases fail against the old logic and pass against the new,
-which was verified rather than assumed, and each of them avoids `/v1/messages` and
-`/chat/completions` so a broken host check cannot hide behind a passing path check.
+A follow-up commit (`65c07ff`) applied the same reasoning one component over. The endpoint-shape
+checks for `/v1/messages` and `/chat/completions` were still substring tests over the whole URL,
+which meant `https://example.net/api?ref=/v1/messages` detected as Anthropic on the strength of a
+query string, and a fragment did the same. They now match inside `urlsplit(url).path`. They remain
+substring tests of the path rather than exact matches, because a compatible server is identified by
+the endpoint shape it exposes wherever it is hosted and whatever prefix it is mounted under.
+
+Twenty-two tests cover the two changes. The nine bypass cases were each run against the
+implementation they replaced and confirmed to fail against it, rather than assumed to. The
+host-matching tests avoid `/v1/messages` and `/chat/completions` entirely, and the path-matching
+tests are all hosted on `example.net`, so neither kind of check can hide behind the other passing.
 
 **On severity.** These were labelled high, and the rule was right about the code, but the practical
 exposure was lower than the label: the URL is operator-supplied rather than attacker-controlled, and
