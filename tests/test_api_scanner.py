@@ -104,6 +104,60 @@ class TestProviderDetectionHostMatching:
         assert detect_provider("https://compatible.example.net/chat/completions") == APIProvider.OPENAI
 
 
+class TestProviderDetectionPathMatching:
+    """Endpoint-shape detection must read the parsed path, not the whole URL.
+
+    Same failure as the host checks, one component over: "/v1/messages" appearing
+    in a query string or a fragment is not the endpoint being served, and a
+    substring test over the raw URL cannot tell those apart from a real path.
+
+    Every URL here is hosted on example.net so that the host checks cannot mask a
+    broken path check and let these pass.
+    """
+
+    def test_anthropic_path_in_query_string_does_not_match(self) -> None:
+        """A path written into a query string is not the path being requested."""
+        assert detect_provider("https://example.net/api?ref=/v1/messages") == APIProvider.CUSTOM
+
+    def test_openai_path_in_query_string_does_not_match(self) -> None:
+        """The same applies to the OpenAI branch."""
+        assert detect_provider("https://example.net/api?ref=/chat/completions") == APIProvider.CUSTOM
+
+    def test_anthropic_path_in_fragment_does_not_match(self) -> None:
+        """Nor is a path written into a fragment, which never reaches the server at all."""
+        assert detect_provider("https://example.net/api#/v1/messages") == APIProvider.CUSTOM
+
+    def test_openai_path_in_fragment_does_not_match(self) -> None:
+        """The same applies to the OpenAI branch."""
+        assert detect_provider("https://example.net/api#/chat/completions") == APIProvider.CUSTOM
+
+    def test_real_path_still_matches(self) -> None:
+        """A genuine endpoint path is still detected, on any host."""
+        assert detect_provider("https://example.net/v1/messages") == APIProvider.ANTHROPIC
+        assert detect_provider("https://example.net/chat/completions") == APIProvider.OPENAI
+
+    def test_path_under_a_mount_prefix_still_matches(self) -> None:
+        """Substring-of-path, not exact match: a gateway may mount the API under a prefix."""
+        assert detect_provider("https://gateway.example.net/anthropic/v1/messages") == APIProvider.ANTHROPIC
+        assert detect_provider("https://gateway.example.net/openai/chat/completions") == APIProvider.OPENAI
+
+    def test_path_match_is_case_insensitive(self) -> None:
+        """The path is lowercased before matching, as the whole URL was before."""
+        assert detect_provider("https://example.net/V1/Messages") == APIProvider.ANTHROPIC
+
+    def test_schemeless_url_still_resolves_its_path(self) -> None:
+        """A schemeless URL is reparsed for its host, and its path survives that."""
+        assert detect_provider("example.net/chat/completions") == APIProvider.OPENAI
+
+    def test_bare_path_still_matches(self) -> None:
+        """A bare path with no host at all is still read as the path it is."""
+        assert detect_provider("/v1/messages") == APIProvider.ANTHROPIC
+
+    def test_query_string_cannot_override_a_real_path(self) -> None:
+        """A real Anthropic path wins regardless of what the query string claims."""
+        assert detect_provider("https://example.net/v1/messages?ref=/chat/completions") == APIProvider.ANTHROPIC
+
+
 class TestPayloadBuilding:
     """Tests for request payload construction."""
 

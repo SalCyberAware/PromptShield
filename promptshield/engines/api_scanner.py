@@ -56,22 +56,26 @@ class APIProvider(str, Enum):
     CUSTOM = "custom"
 
 
-def _url_host(url: str) -> str:
-    """Return the lowercased host of ``url``, or an empty string if it has none.
+def _split_url(url: str) -> tuple[str, str]:
+    """Return ``url``'s host and path, lowercased, or empty strings if unparseable.
 
     ``urlsplit().hostname`` lowercases the host and drops any userinfo and port,
     so ``https://user@API.Anthropic.com:443/v1`` resolves to ``api.anthropic.com``.
     A URL written without a scheme still names a host, so it is reparsed as a
-    protocol-relative URL rather than being read as a bare path.
+    protocol-relative URL rather than being read as a bare path. The reparse is
+    kept only when it actually finds a host, which leaves a bare path such as
+    ``/v1/messages`` parsed as the path it is.
     """
     try:
-        host = urlsplit(url).hostname
-        if not host:
-            host = urlsplit("//" + url).hostname
+        parts = urlsplit(url)
+        if not parts.hostname:
+            reparsed = urlsplit("//" + url)
+            if reparsed.hostname:
+                parts = reparsed
     except ValueError:
-        # Unparseable, e.g. a malformed IPv6 literal. No host worth trusting.
-        return ""
-    return host or ""
+        # Unparseable, e.g. a malformed IPv6 literal. Nothing worth trusting.
+        return "", ""
+    return (parts.hostname or ""), parts.path.lower()
 
 
 def _host_is(host: str, domain: str) -> bool:
@@ -88,18 +92,22 @@ def _host_is(host: str, domain: str) -> bool:
 def detect_provider(url: str) -> APIProvider:
     """Best-effort detection of the API provider from a URL.
 
-    Host checks compare the parsed host. Path checks stay substring tests against
-    the whole URL on purpose: an OpenAI-compatible or Anthropic-compatible server
-    is identified by the endpoint shape it exposes, wherever it happens to be
-    hosted, which is why ``https://compatible.example.com/chat/completions``
-    should still be detected as OpenAI.
-    """
-    url_lower = url.lower()
-    host = _url_host(url)
+    Both kinds of check read a parsed component rather than the raw URL string.
+    The host is compared on a dot boundary; the endpoint shape is matched inside
+    the path only, so a path written into a query string or a fragment does not
+    stand in for the real one.
 
-    if _host_is(host, "anthropic.com") or "/v1/messages" in url_lower:
+    The path test is a substring of the path rather than an exact match, on
+    purpose. An Anthropic-compatible or OpenAI-compatible server is identified by
+    the endpoint shape it exposes, wherever it is hosted and whatever it is
+    mounted under, so ``https://compatible.example.com/chat/completions`` and
+    ``https://gateway.example.com/anthropic/v1/messages`` are both detected.
+    """
+    host, path = _split_url(url)
+
+    if _host_is(host, "anthropic.com") or "/v1/messages" in path:
         return APIProvider.ANTHROPIC
-    if _host_is(host, "openai.com") or "/chat/completions" in url_lower:
+    if _host_is(host, "openai.com") or "/chat/completions" in path:
         return APIProvider.OPENAI
     return APIProvider.CUSTOM
 
