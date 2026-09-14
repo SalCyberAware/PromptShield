@@ -147,9 +147,9 @@ turned out to be zero:
   (5 high, 1 moderate), all transitive build-toolchain advisories, excluded by `--omit=dev` for the
   reasons commented on the job.
 - gitleaks: clean across all 108 commits of history.
-- **CodeQL: 2 open high-severity alerts**, both `py/incomplete-url-substring-sanitization` in
-  `promptshield/engines/api_scanner.py` at lines 61 and 63, in `detect_provider`. They are open and
-  unsuppressed pending a decision. See the open findings section below.
+- **CodeQL: 2 high-severity alerts**, both `py/incomplete-url-substring-sanitization` in
+  `promptshield/engines/api_scanner.py` at lines 61 and 63, in `detect_provider`. Fixed in `72dfb57`
+  and closed by CodeQL on 2026-09-14. See the resolved findings section below.
 
 ---
 
@@ -314,37 +314,39 @@ checklist item on the next SOCTriage dependency or runtime change.
 
 ---
 
-## Open findings: CodeQL on `detect_provider`
+## Resolved findings: CodeQL on `detect_provider`
 
 CodeQL's first run opened two high-severity alerts, both
 `py/incomplete-url-substring-sanitization`, at `promptshield/engines/api_scanner.py:61` and `:63`.
-Both are in `detect_provider`, which picks a request format from the target URL:
+**Both are fixed and CodeQL closed them automatically on 2026-09-14** (commit `72dfb57`). Recorded
+here because the first thing Tier 1 caught is worth keeping a record of.
+
+The host checks were substring tests over the whole URL:
 
 ```python
 if "anthropic.com" in url_lower or "/v1/messages" in url_lower:
-    return APIProvider.ANTHROPIC
-if "openai.com" in url_lower or "/chat/completions" in url_lower:
-    return APIProvider.OPENAI
 ```
 
-**The rule is correct about the code.** A substring test is not a host test. `anthropic.com` matches
-`https://anthropic.com.example.net/`, and it matches `https://example.net/?ref=anthropic.com`. If
-this check were an allowlist, that would be a straightforward bypass.
+A substring test is not a host test. `anthropic.com` matched `anthropic.com.example.net`, a
+lookalike domain someone else controls, and `example.net/?ref=anthropic.com`, where the name only
+appears in a query string.
 
-**The severity is lower here than the label suggests**, for two reasons worth stating rather than
-assuming. First, the URL is supplied by the operator: it is the endpoint they asked PromptShield to
-scan, not attacker-controlled input arriving over the network. Second, the return value selects a
-payload format, not a trust decision. A wrong answer produces a malformed request and a failed
-scan, not an escalation. The API key travels to the target URL regardless of which branch is taken,
-including the `CUSTOM` fallback, so the detection is not what puts the credential on the wire.
+**The fix** parses the URL and compares the host, matching the domain itself or a subdomain on the
+dot boundary. `urlsplit().hostname` also normalizes case and strips userinfo and port, and a
+malformed URL now resolves to no host rather than raising. The path checks for `/v1/messages` and
+`/chat/completions` are unchanged: those are legitimate shape detection, since a compatible server
+is identified by the endpoint it exposes wherever it is hosted.
 
-**They are open and unsuppressed.** No dismissal, no inline `nosec`, no query filter. The fix is
-cheap and correct: parse the URL and compare the host, matching exactly or on a dot-boundary suffix,
-instead of testing a substring of the whole URL. That makes the detection right as well as safe, and
-it removes a genuine footgun if this function is ever reused somewhere the URL is less trusted.
+Twelve tests cover it. The five bypass cases fail against the old logic and pass against the new,
+which was verified rather than assumed, and each of them avoids `/v1/messages` and
+`/chat/completions` so a broken host check cannot hide behind a passing path check.
 
-Fixing it is a code change and therefore not part of the Tier 1 commit, which only added reporting.
-It is a small, self-contained change waiting on a decision.
+**On severity.** These were labelled high, and the rule was right about the code, but the practical
+exposure was lower than the label: the URL is operator-supplied rather than attacker-controlled, and
+the return value picks a request format rather than making a trust decision. They were still worth
+fixing. The check is now correct as well as safe, and the function no longer carries a footgun for
+whoever reuses it somewhere the URL is less trusted. The argument for fixing a finding is not only
+what it costs today.
 
 ---
 
