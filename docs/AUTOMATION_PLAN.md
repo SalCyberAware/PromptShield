@@ -2,7 +2,8 @@
 
 **Scope:** PromptShield, ThreatScan, SOCTriage (github.com/SalCyberAware)
 **Written:** 2026-09-13
-**Status:** planning document. No CI changes ship with this commit.
+**Status:** Tier 1 is implemented on PromptShield only (`.github/workflows/security.yml`, all jobs
+green as of 2026-09-13). Everything else on this page is still a plan.
 
 ---
 
@@ -121,6 +122,35 @@ September failure on the day it happened rather than three months later.
   has to assert instead.
 - Alerts go somewhere that gets read. An alert nobody sees is the same as no alert.
 
+### 1.5 Implementation status
+
+**PromptShield: 1.1, 1.2 and 1.3 are live** in `.github/workflows/security.yml` as of 2026-09-13.
+Five jobs, all green on first run, alongside the seven existing `ci.yml` jobs which were not touched.
+**1.4 (uptime monitoring) is not done**, and it remains the highest-value item on this page.
+
+ThreatScan and SOCTriage have none of Tier 1 yet.
+
+Two deliberate deviations from what 1.1 specifies above, both made because the measured noise level
+turned out to be zero:
+
+- `npm audit` went in blocking at `high` immediately rather than non-blocking for two weeks. The
+  two-week soak existed to measure noise before committing; the frontend production tree has no
+  findings at all, so there was nothing to measure.
+- Scheduled runs fail the job rather than opening an issue. A failed scheduled run is already
+  visible and already emails the owner. Issue-opening can be added if weekly failures start getting
+  scrolled past.
+
+**Findings on the existing code, recorded so they are not lost:**
+
+- pip-audit: clean on both Python trees (45 packages resolved from the root package).
+- npm audit: clean on the frontend production tree. The full tree including dev carries 6 findings
+  (5 high, 1 moderate), all transitive build-toolchain advisories, excluded by `--omit=dev` for the
+  reasons commented on the job.
+- gitleaks: clean across all 108 commits of history.
+- **CodeQL: 2 open high-severity alerts**, both `py/incomplete-url-substring-sanitization` in
+  `promptshield/engines/api_scanner.py` at lines 61 and 63, in `detect_provider`. They are open and
+  unsuppressed pending a decision. See the open findings section below.
+
 ---
 
 ## Tier 2: automated proposal, human merges
@@ -221,8 +251,8 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
-| **Workflow files** | `.github/workflows/ci.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
-| **CI jobs** | 5: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
+| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
+| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
 | **Backend tests** | 239 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
@@ -234,9 +264,9 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | **None.** No uptime check, no alerting, no error tracking found | **None** | **None** |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
-| **Secret scanning** | **None** | **None** | **None** |
-| **Vulnerability scanning** | **None** | **None** | **None** |
-| **CodeQL** | **None** | **None** | **None** |
+| **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | **None** | **None** |
+| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | **None** | **None** |
+| **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | **None** | **None** |
 
 Notes on the table:
 
@@ -281,6 +311,40 @@ version is next touched, rather than scheduling a dedicated session for it.
 is the failure mode this whole document exists to address. The variable lives in Railway's
 environment, where nothing in the repo will remind anyone it is set. Removing it should be a
 checklist item on the next SOCTriage dependency or runtime change.
+
+---
+
+## Open findings: CodeQL on `detect_provider`
+
+CodeQL's first run opened two high-severity alerts, both
+`py/incomplete-url-substring-sanitization`, at `promptshield/engines/api_scanner.py:61` and `:63`.
+Both are in `detect_provider`, which picks a request format from the target URL:
+
+```python
+if "anthropic.com" in url_lower or "/v1/messages" in url_lower:
+    return APIProvider.ANTHROPIC
+if "openai.com" in url_lower or "/chat/completions" in url_lower:
+    return APIProvider.OPENAI
+```
+
+**The rule is correct about the code.** A substring test is not a host test. `anthropic.com` matches
+`https://anthropic.com.example.net/`, and it matches `https://example.net/?ref=anthropic.com`. If
+this check were an allowlist, that would be a straightforward bypass.
+
+**The severity is lower here than the label suggests**, for two reasons worth stating rather than
+assuming. First, the URL is supplied by the operator: it is the endpoint they asked PromptShield to
+scan, not attacker-controlled input arriving over the network. Second, the return value selects a
+payload format, not a trust decision. A wrong answer produces a malformed request and a failed
+scan, not an escalation. The API key travels to the target URL regardless of which branch is taken,
+including the `CUSTOM` fallback, so the detection is not what puts the credential on the wire.
+
+**They are open and unsuppressed.** No dismissal, no inline `nosec`, no query filter. The fix is
+cheap and correct: parse the URL and compare the host, matching exactly or on a dot-boundary suffix,
+instead of testing a substring of the whole URL. That makes the detection right as well as safe, and
+it removes a genuine footgun if this function is ever reused somewhere the URL is less trusted.
+
+Fixing it is a code change and therefore not part of the Tier 1 commit, which only added reporting.
+It is a small, self-contained change waiting on a decision.
 
 ---
 
