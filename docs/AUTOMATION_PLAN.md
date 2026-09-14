@@ -19,11 +19,23 @@ The common thread is not that four things broke. Things break. The problem is th
 invisible from outside the system. The README badges were green. The repo was clean. Nothing in the
 toolchain was watching the part that actually matters, which is whether the deployed thing works.
 
-Two of the four have since been addressed in the repo. Commit `5b2693d` (2026-09-12) realigned the
-SOCTriage frontend with the API contract and wired the health check, and `b966dbf` the same day was
-a push to trigger a Vercel build after reconnecting git. The other two, the Railway build and the
-database persistence, depend on platform configuration that cannot be confirmed by reading the repo.
-They are listed as unverified below.
+All four have since been fixed, two in the repo and two in platform configuration.
+
+- **The broken feature** was fixed by `5b2693d` (2026-09-12), which realigned the SOCTriage frontend
+  with the API contract and wired the health check.
+- **The Vercel disconnect** is resolved. The project is git-connected to `main` and auto-deploying,
+  verified by a push triggering a build within 30 seconds. Commit `b966dbf` (2026-09-12) was that
+  triggering push.
+- **The ephemeral database** is resolved. A Postgres service is attached on Railway with
+  `DATABASE_URL` set, verified by `created_at` returning with a `Z` suffix, which is Postgres
+  behavior rather than SQLite.
+- **The Railway build failure** is fixed. The cause was a mise attestation failure on the pinned
+  Python version, worked around by setting `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. That is a
+  workaround, not a fix, and is recorded as technical debt below.
+
+Fixing all four does not make the plan less necessary. It took a manual audit to find them, and the
+same audit would find nothing today. The question this document answers is what would have found
+them without the audit.
 
 This plan exists so that this class of failure gets caught by a machine on a schedule instead of by
 a human who happened to click the demo link.
@@ -203,7 +215,9 @@ build).
 
 ## Per-repo current state
 
-Read from the repos on 2026-09-13. Anything not determinable from the repo is marked unverified.
+Read from the repos on 2026-09-13. Rows marked "platform-verified" were confirmed on Railway and
+Vercel rather than in the repo. Anything that was neither read from the repo nor checked on the
+platform is marked unverified. ThreatScan's deploy state is the one gap: it was not checked.
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
@@ -215,9 +229,9 @@ Read from the repos on 2026-09-13. Anything not determinable from the repo is ma
 | **Type checking** | Yes, mypy strict on `promptshield/` | No | No |
 | **Coverage reporting** | Codecov, from the 3.13 matrix leg | Codecov, backend only | Codecov, backend only |
 | **Deploy config in repo** | `railway.json` (backend), `backend/Procfile`, `backend/runtime.txt` | None in repo. README documents manual Railway and Vercel setup | `backend/Procfile`, `backend/runtime.txt`. No `railway.json` |
-| **Deploy git-connected** | Unverified. Not determinable from the repo | Unverified. Not determinable from the repo | Vercel was disconnected as of the 2026-09-11 audit. `b966dbf` (2026-09-12) is a push to trigger a build after reconnecting. Whether it is now connected is unverified from the repo. Railway git-connection status unverified |
-| **Railway build health** | Unverified | Unverified | Was failing since June per the audit. Current state unverified from the repo |
-| **Database** | None | None | SQLAlchemy. `backend/database.py` falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which on Railway is ephemeral. Whether `DATABASE_URL` is now set in the Railway environment is unverified from the repo |
+| **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Unverified. Not determinable from the repo, and not checked on the platform | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
+| **Railway build health** | Building and deploying (platform-verified) | Unverified | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
+| **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | **None.** No uptime check, no alerting, no error tracking found | **None** | **None** |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
 | **Secret scanning** | **None** | **None** | **None** |
@@ -237,6 +251,39 @@ Notes on the table:
 
 ---
 
+## Technical debt: the mise attestation workaround
+
+**Where:** SOCTriage, Railway build environment. `MISE_PYTHON_GITHUB_ATTESTATIONS=false`.
+
+The Railway build that had been failing since June was failing because mise could not verify the
+GitHub build attestations for the pinned Python version (`python-3.11.9`, in `backend/runtime.txt`).
+The build now succeeds because that verification is switched off.
+
+**What that costs.** Attestation checking is a supply-chain control. It confirms the Python
+toolchain the builder downloads was produced by the build pipeline it claims to come from, and not
+substituted somewhere between publication and the build host. Disabling it does not make a
+compromise likely, but it does remove the check that would notice one. It is worth naming plainly
+that a security portfolio is currently building one of its three services with a supply-chain
+verification step turned off.
+
+**Why it is acceptable for now.** The alternative was a service that did not build at all, and had
+not built for three months. Shipping with the check disabled and a note is better than the state
+this replaced.
+
+**The proper fix.** Resolve to a Python version whose attestations the builder can verify, and
+remove the variable. That most likely means moving off the exact pinned patch version to one mise
+can verify cleanly, and keeping `backend/runtime.txt` and the CI matrix in step with whatever that
+turns out to be (`.github/workflows/backend-tests.yml` pins `3.11.9` with a comment saying to keep
+it in sync with `runtime.txt`, so both move together). Worth attempting whenever SOCTriage's Python
+version is next touched, rather than scheduling a dedicated session for it.
+
+**Do not let it go quiet.** This is exactly the kind of thing that is invisible from outside, which
+is the failure mode this whole document exists to address. The variable lives in Railway's
+environment, where nothing in the repo will remind anyone it is set. Removing it should be a
+checklist item on the next SOCTriage dependency or runtime change.
+
+---
+
 ## Enterprise gaps, honestly stated
 
 These are real gaps. None is done, and none is scheduled by this document. They are listed because a
@@ -244,7 +291,21 @@ plan that only describes what is easy is not a plan.
 
 ### Authentication: absent everywhere
 
-SOCTriage exposes five endpoints and not one of them has an auth check:
+**No backend in any of the three repos has authentication.** Not PromptShield, not ThreatScan, not
+SOCTriage. There is no `Depends()`, no API key header, no bearer token, and no session anywhere in
+the application code of any of them. Every endpoint is open to any caller who knows the URL.
+
+The exposure is not the same in all three, and the difference is worth stating precisely.
+
+**PromptShield and ThreatScan: API budget spend.** Both backends call paid third-party APIs on
+behalf of anonymous callers. PromptShield runs a full attack scan against a real model per request,
+and ThreatScan fans out to eleven intel providers. An unauthenticated caller cannot read anything
+they should not, because neither service stores user-submitted data across requests, but they can
+spend the owner's API budget at whatever rate the rate limiter allows. The in-memory rate limiters
+described below are the only thing standing between a scripted caller and the bill.
+
+**SOCTriage: API budget spend, plus stored case data.** SOCTriage has the same exposure, and on top
+of it, it persists what users submit and exposes that data through unauthenticated endpoints:
 
 - `GET /health`
 - `POST /api/triage`
@@ -252,15 +313,14 @@ SOCTriage exposes five endpoints and not one of them has an auth check:
 - `GET /api/cases/{case_id}`
 - `GET /api/dashboard`
 
-`GET /api/cases` returns every case in the database to any caller. There is no `Depends()`, no API
-key header, no bearer token, and no session anywhere in the application code. The same is true of
-the PromptShield and ThreatScan backends, though they hold less at stake because neither stores
-user-submitted data across requests.
+`GET /api/cases` returns every case in the database to any caller. `POST /api/triage` writes to it.
+So an anonymous caller can read the stored case data and add to it. Now that Postgres is attached
+and the data actually survives restarts, this matters more than it did in September, not less: the
+ephemeral storage bug was destroying the same data that has no access control on it.
 
-For a public portfolio demo this is a defensible tradeoff, since the point is that a visitor can
-click the link and see it work. It is worth being explicit that it *is* a tradeoff rather than an
-oversight, and that SOCTriage is where it matters most, because it is the one that persists what
-users submit.
+For a public portfolio demo, open access is a defensible tradeoff, since the point is that a visitor
+can click the link and see it work. It is worth being explicit that it *is* a tradeoff rather than an
+oversight, and that SOCTriage is where the tradeoff is most expensive.
 
 ### Multi-tenancy: not designed for it
 
