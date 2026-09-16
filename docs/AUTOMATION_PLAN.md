@@ -127,7 +127,12 @@ September failure on the day it happened rather than three months later.
 
 **1.1, 1.2 and 1.3 are live for PromptShield** in `.github/workflows/security.yml` as of
 2026-09-13. Five jobs, all green on first run, alongside the seven existing `ci.yml` jobs, which
-were not touched. ThreatScan and SOCTriage have none of the scanners yet.
+were not touched.
+
+**ThreatScan has 1.1, 1.2 and 1.3 as of 2026-09-16**, in its own
+`.github/workflows/security.yml`, adapted rather than copied: no pip-audit job because there is no
+Python, two npm audit jobs because a server tree and a browser tree are different risks, and CodeQL
+on `javascript-typescript` only. SOCTriage still has none of the scanners.
 
 **1.4 is live for all three projects** in `.github/workflows/uptime.yml` as of 2026-09-14. Six
 checks on a 15 minute schedule plus manual dispatch: a backend health endpoint and a frontend for
@@ -272,8 +277,8 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
-| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml` | `.github/workflows/backend-tests.yml` |
-| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest) | 1: pytest with coverage |
+| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/backend-tests.yml` |
+| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 1: pytest with coverage |
 | **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
@@ -285,9 +290,9 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend | Same monitor, run from PromptShield's `uptime.yml` | Same monitor, run from PromptShield's `uptime.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
-| **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | **None** | **None** |
-| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | **None** | **None** |
-| **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | **None** | **None** |
+| **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | **None** |
+| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. The backend job is red on 5 real findings in the deployed dependency tree; see the open findings section | **None** |
+| **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | **None** |
 
 Notes on the table:
 
@@ -332,6 +337,39 @@ version is next touched, rather than scheduling a dedicated session for it.
 is the failure mode this whole document exists to address. The variable lives in Railway's
 environment, where nothing in the repo will remind anyone it is set. Removing it should be a
 checklist item on the next SOCTriage dependency or runtime change.
+
+---
+
+## Open findings: ThreatScan backend dependencies
+
+ThreatScan's first `npm audit` run found 5 advisories in the **backend production tree**, the code
+that actually serves requests on Railway. This job is red and is meant to be. Recorded here because
+an open finding that lives only in a CI log is an open finding nobody will remember.
+
+| Package | Severity | Direct | Advisory |
+|---|---|---|---|
+| `axios` | high | yes | Prototype pollution, `maxBodyLength` bypasses, proxy handling, formDataToJSON recursion |
+| `form-data` | high | transitive | CRLF injection via unescaped multipart field names |
+| `express` | moderate | yes | Depends on a vulnerable `qs` |
+| `qs` | moderate | transitive | Array-limit bypass, denial of service via attacker-controlled `isBuffer` |
+| `body-parser` | moderate | transitive | Denial of service when an invalid limit silently disables size enforcement |
+
+**Every one has a semver-compatible fix.** None requires a major version bump, so `npm audit fix`
+resolves all 5 inside the ranges already declared in `backend/package.json`.
+
+**Nothing was suppressed to make this green.** The threshold was not raised, no advisory was
+ignored, and `--omit=dev` narrows scope to the deployed tree rather than hiding anything: the dev
+tree here is jest, nodemon and supertest, which never run in production. The finding is real and the
+red check is the correct signal.
+
+**Why it is not already fixed.** Bumping dependencies on a deployed service is a Tier 2 change, and
+Tier 2 says a human merges. The lockfile update is a small, reviewable change with the existing
+229-test jest suite behind it, but it is a change to what runs in production and it is not the
+scanner's call, or this document's.
+
+This is also the first genuine demonstration that Tier 1 works. The scanners found something that
+was already true, already deployed, and invisible from outside, which is the entire premise of the
+plan.
 
 ---
 
@@ -473,7 +511,8 @@ change. Three backends, three frontends, alerts going to the repository owner on
 Second because it is the highest-severity thing that could already be wrong with nobody knowing.
 Unlike the other scanners, a finding here is an emergency rather than a backlog item, and the
 full-history scan either finds something or permanently retires the worry. PromptShield's history is
-clean across all 108 commits. ThreatScan and SOCTriage are still unscanned.
+clean across all 108 commits, and ThreatScan's is clean too as of 2026-09-16, scanned for the first
+time. SOCTriage is still unscanned.
 
 **Step 3. Build identity in every health response, then post-deploy verification.**
 Third because it needs a code change in all three repos (the commit SHA plumbing) and is therefore
