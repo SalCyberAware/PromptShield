@@ -2,11 +2,10 @@
 
 **Scope:** PromptShield, ThreatScan, SOCTriage (github.com/SalCyberAware)
 **Written:** 2026-09-13
-**Status:** Tier 1 is implemented across all three repos as of 2026-09-16. Each repo has its own
-`security.yml`; the uptime monitor for all six deployed surfaces runs from PromptShield's
-`uptime.yml`. Every scanner job is green except SOCTriage's pip-audit, which is red on 8 real
-advisories recorded below. Tiers 2 and 3, deploy verification, and the enterprise gaps are still
-plans.
+**Status:** Tier 1 is implemented across all three repos as of 2026-09-16, and every scanner job is
+green. Each repo has its own `security.yml`; the uptime monitor for all six deployed surfaces runs
+from PromptShield's `uptime.yml`. Every advisory the scanners found on first run has been fixed.
+Tiers 2 and 3, deploy verification, and the enterprise gaps are still plans.
 
 ---
 
@@ -298,15 +297,17 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend | Same monitor, run from PromptShield's `uptime.yml` | Same monitor, run from PromptShield's `uptime.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
 | **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean |
-| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | Yes. pip-audit over `backend/requirements.txt` and `npm audit --omit=dev` over the frontend production tree. The pip-audit job is red on 8 real advisories; see below |
+| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | Yes. pip-audit over `backend/requirements.txt` and `npm audit --omit=dev` over the frontend production tree. Both clean as of 2026-09-16, after the fastapi bump described below |
 | **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | Yes. `python` and `javascript-typescript`. Zero open alerts on first run |
 
 Notes on the table:
 
 - Python test counts come from counting test function definitions in the source. The actual number
   of collected cases will be higher wherever parametrization is used. SOCTriage's README claims a
-  "71-test pytest suite"; the repo has 62 `def test_` definitions, and the difference is consistent
-  with parametrized cases. Neither Python number was verified by running the suite.
+  "71-test pytest suite"; the repo has 62 `def test_` definitions. **Verified by running it on
+  2026-09-16: pytest collects exactly 71 from those 62 definitions, so the README was right and the
+  source count was the misleading one.** PromptShield's Python numbers are still source counts and
+  have not been reconciled the same way.
 - ThreatScan's figure is jest's own count from a real run, which is why it is the most trustworthy
   number in the row. It was previously recorded here as "229 `it()` blocks", which was wrong: that
   grep descended into `node_modules` and counted test files belonging to dependencies. The suite is
@@ -352,10 +353,11 @@ checklist item on the next SOCTriage dependency or runtime change.
 
 ---
 
-## Open findings: SOCTriage backend dependencies
+## Resolved findings: SOCTriage backend dependencies
 
-SOCTriage's first `pip-audit` run found 8 advisories in the backend dependency tree. This job is red
-and is meant to be.
+SOCTriage's first `pip-audit` run found 8 advisories in the backend dependency tree. **All eight
+were cleared on 2026-09-16** in commit `71dfa67`, which bumped `fastapi` 0.115.0 to 0.141.1 (pulling
+starlette 0.38.6 to 1.6.0) and `python-dotenv` 1.0.1 to 1.2.2.
 
 | Package | Version | Advisory | Fixed in |
 |---|---|---|---|
@@ -373,23 +375,48 @@ through `fastapi==0.115.0`, which pins it below 0.39. Reading the file would nev
 this; auditing the resolved tree did. That is the argument for auditing what gets installed rather
 than what is written down.
 
-**This is not a one-command fix, unlike ThreatScan's.** `python-dotenv` moves on its own, but every
-starlette advisory needs fastapi bumped first, since the pin is what holds starlette back. That is a
-real upgrade of the web framework this service runs on, not a lockfile refresh.
+**This was not a one-command fix, unlike ThreatScan's.** `python-dotenv` moved on its own, but every
+starlette advisory needed fastapi bumped first, since the pin was what held starlette back. That is a
+real upgrade of the web framework this service runs on, not a lockfile refresh, so it was verified by
+diffing the old and new stacks rather than by trusting a green suite.
 
-**There is a proven path.** PromptShield made exactly this move in `1594d41`, bumping fastapi
-0.115.0 to 0.141.1 and python-dotenv 1.0.1 to 1.2.2. SOCTriage has 62 backend tests to check the
-result against, though it has no lint or type checking to catch a signature change the tests miss.
+**Two real behaviour changes were found:**
 
-**On how much these matter here.** Several of the starlette advisories concern multipart form
-parsing and `StaticFiles`, and SOCTriage serves neither: its five endpoints take JSON and return
-JSON, and static files are served by Vercel, not by this app. The two host-header advisories are the
+- `include_router` no longer flattens routes into `app.routes`. There is now a single
+  `_IncludedRouter` entry holding them, so `app.routes` drops from 12 entries to 6. Routing, the
+  OpenAPI paths and every endpoint are unaffected, and nothing in this repo introspects `app.routes`.
+- CORS simple requests under `allow_origins=["*"]` now reflect the calling origin instead of
+  returning a literal `*`. Production is unaffected because it sets `FRONTEND_URL` to the Vercel
+  frontend and never takes the wildcard path, which was confirmed against the deployed service
+  before and after. It applies to local development, where the wildcard default is used.
+- A third, smaller one is visible to clients: 422 validation bodies now carry `input` and `ctx`
+  alongside `loc`, `msg` and `type`. Additive, so a client reading the existing fields is unaffected.
+
+**What the tests could not cover.** SOCTriage has no linter and no type checker, so nothing would
+catch a changed function signature, a renamed keyword argument, or a drifted type annotation that the
+71 tests happen not to exercise. The tests also never touch `app.routes`, CORS headers, or the
+OpenAPI schema, which is precisely where all three real changes landed. They were found by running an
+identical probe against both stacks and diffing the output, not by the suite going green. Adding
+ruff and mypy here is the durable fix; it is recorded as a gap rather than done.
+
+**On how much these mattered here.** Several of the starlette advisories concern multipart form
+parsing and `StaticFiles`, and SOCTriage serves neither, which was verified by searching the backend
+for `StreamingResponse`, `StaticFiles`, `UploadFile`, `File(`, `Form(`, `multipart` and `WebSocket`
+and finding none. Its eight endpoints take JSON and return JSON, and static files are served by
+Vercel, not by this app. The two host-header advisories are the
 ones worth taking seriously, since they poison `request.url` and this app is a public unauthenticated
 API. None of this is a reason to leave the bump undone; it is a reason not to treat the count of 8 as
 the measure of the risk.
 
-**Nothing was suppressed.** No advisory is ignored and no threshold was raised. Clearing this is a
-Tier 2 dependency change, which the plan says a human merges.
+**Verified in production, not just in CI.** Railway redeployed within about a minute of the push,
+confirmed by the deployed `/openapi.json` gaining the `ctx` and `input` fields that only the new
+fastapi emits, since this service's health endpoint reports a hardcoded version and cannot answer the
+question directly. The live service was then exercised end to end: health, a real triage returning 11
+enrichment engines and an AI report with five MITRE techniques, a `PATCH` status update, a read-back
+confirming persistence, a 422 on an invalid enum, and the dashboard. CORS behaviour against the
+deployed service was byte-for-byte identical before and after.
+
+**Nothing was suppressed.** No advisory was ignored and no threshold was raised.
 
 ---
 
@@ -503,12 +530,23 @@ of it, it persists what users submit and exposes that data through unauthenticat
 - `POST /api/triage`
 - `GET /api/cases`
 - `GET /api/cases/{case_id}`
+- `PATCH /api/cases/{case_id}/status`
+- `PATCH /api/cases/{case_id}/note`
+- `PATCH /api/cases/{case_id}/close`
 - `GET /api/dashboard`
 
-`GET /api/cases` returns every case in the database to any caller. `POST /api/triage` writes to it.
-So an anonymous caller can read the stored case data and add to it. Now that Postgres is attached
-and the data actually survives restarts, this matters more than it did in September, not less: the
-ephemeral storage bug was destroying the same data that has no access control on it.
+**Corrected 2026-09-16: there are eight endpoints, not the five recorded here previously.** The three
+`PATCH` routes were missed because the grep that enumerated them listed `get`, `post`, `put` and
+`delete` and omitted `patch`. That correction makes the gap worse rather than cosmetic: it is not one
+unauthenticated write endpoint but four, and three of them mutate the state of an existing case.
+
+`GET /api/cases` returns every case in the database to any caller. `POST /api/triage` writes to it,
+and the three `PATCH` routes let any caller change a case's status, append an analyst note, or close
+a case with an arbitrary resolution. So an anonymous caller can read the stored case data, add to it,
+and rewrite the audit-relevant parts of it. Now that Postgres is attached and the data actually
+survives restarts, this matters more than it did in September, not less: the ephemeral storage bug
+was destroying the same data that has no access control on it. There is also no audit logging, so a
+change made this way leaves no record of who made it.
 
 For a public portfolio demo, open access is a defensible tradeoff, since the point is that a visitor
 can click the link and see it work. It is worth being explicit that it *is* a tradeoff rather than an
