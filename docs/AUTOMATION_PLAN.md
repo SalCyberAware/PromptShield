@@ -2,9 +2,11 @@
 
 **Scope:** PromptShield, ThreatScan, SOCTriage (github.com/SalCyberAware)
 **Written:** 2026-09-13
-**Status:** Tier 1 is complete, hosted in PromptShield (`security.yml` and `uptime.yml`, all jobs
-green as of 2026-09-14). The uptime monitor covers all three projects; the scanners cover
-PromptShield only. Tiers 2 and 3, deploy verification, and the enterprise gaps are still plans.
+**Status:** Tier 1 is implemented across all three repos as of 2026-09-16. Each repo has its own
+`security.yml`; the uptime monitor for all six deployed surfaces runs from PromptShield's
+`uptime.yml`. Every scanner job is green except SOCTriage's pip-audit, which is red on 8 real
+advisories recorded below. Tiers 2 and 3, deploy verification, and the enterprise gaps are still
+plans.
 
 ---
 
@@ -132,7 +134,12 @@ were not touched.
 **ThreatScan has 1.1, 1.2 and 1.3 as of 2026-09-16**, in its own
 `.github/workflows/security.yml`, adapted rather than copied: no pip-audit job because there is no
 Python, two npm audit jobs because a server tree and a browser tree are different risks, and CodeQL
-on `javascript-typescript` only. SOCTriage still has none of the scanners.
+on `javascript-typescript` only.
+
+**SOCTriage has 1.1, 1.2 and 1.3 as of 2026-09-16**, in its own
+`.github/workflows/security.yml`. One Python tree rather than PromptShield's two, since there is no
+installable root package here, pinned to Python 3.11.9 to match `backend/runtime.txt` so the tree
+resolves the way production does. **Tier 1 now covers all three repos.**
 
 **1.4 is live for all three projects** in `.github/workflows/uptime.yml` as of 2026-09-14. Six
 checks on a 15 minute schedule plus manual dispatch: a backend health endpoint and a frontend for
@@ -277,8 +284,8 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
-| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/backend-tests.yml` |
-| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 1: pytest with coverage |
+| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/backend-tests.yml`, `.github/workflows/security.yml` |
+| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 6 across two workflows. `backend-tests.yml` has 1: pytest with coverage. `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) |
 | **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 152 tests across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
@@ -290,9 +297,9 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend | Same monitor, run from PromptShield's `uptime.yml` | Same monitor, run from PromptShield's `uptime.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
-| **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | **None** |
-| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | **None** |
-| **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | **None** |
+| **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean |
+| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | Yes. pip-audit over `backend/requirements.txt` and `npm audit --omit=dev` over the frontend production tree. The pip-audit job is red on 8 real advisories; see below |
+| **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | Yes. `python` and `javascript-typescript`. Zero open alerts on first run |
 
 Notes on the table:
 
@@ -342,6 +349,47 @@ version is next touched, rather than scheduling a dedicated session for it.
 is the failure mode this whole document exists to address. The variable lives in Railway's
 environment, where nothing in the repo will remind anyone it is set. Removing it should be a
 checklist item on the next SOCTriage dependency or runtime change.
+
+---
+
+## Open findings: SOCTriage backend dependencies
+
+SOCTriage's first `pip-audit` run found 8 advisories in the backend dependency tree. This job is red
+and is meant to be.
+
+| Package | Version | Advisory | Fixed in |
+|---|---|---|---|
+| `starlette` | 0.38.6 | Missing Host header validation poisons `request.url.path`, bypassing path-based security checks | 1.0.1 |
+| `starlette` | 0.38.6 | Unvalidated request path concatenated into authority poisons `request.url.hostname` | 1.3.0 |
+| `starlette` | 0.38.6 | Arbitrary HTTP method dispatched to `HTTPEndpoint` attributes via `getattr` | 1.1.0 |
+| `starlette` | 0.38.6 | SSRF and NTLM credential theft via UNC paths in `StaticFiles` on Windows | 1.1.0 |
+| `starlette` | 0.38.6 | `request.form()` limits silently ignored for urlencoded bodies, enabling denial of service | 1.3.1 |
+| `starlette` | 0.38.6 | Denial of service parsing large files in multipart forms | 0.47.2 |
+| `starlette` | 0.38.6 | Denial of service via `multipart/form-data` | 0.40.0 |
+| `python-dotenv` | 1.0.1 | Symlink following in `set_key` allows arbitrary file overwrite via cross-device rename fallback | 1.2.2 |
+
+**The interesting part is that starlette is not in `requirements.txt`.** It is reached transitively
+through `fastapi==0.115.0`, which pins it below 0.39. Reading the file would never have surfaced
+this; auditing the resolved tree did. That is the argument for auditing what gets installed rather
+than what is written down.
+
+**This is not a one-command fix, unlike ThreatScan's.** `python-dotenv` moves on its own, but every
+starlette advisory needs fastapi bumped first, since the pin is what holds starlette back. That is a
+real upgrade of the web framework this service runs on, not a lockfile refresh.
+
+**There is a proven path.** PromptShield made exactly this move in `1594d41`, bumping fastapi
+0.115.0 to 0.141.1 and python-dotenv 1.0.1 to 1.2.2. SOCTriage has 62 backend tests to check the
+result against, though it has no lint or type checking to catch a signature change the tests miss.
+
+**On how much these matter here.** Several of the starlette advisories concern multipart form
+parsing and `StaticFiles`, and SOCTriage serves neither: its five endpoints take JSON and return
+JSON, and static files are served by Vercel, not by this app. The two host-header advisories are the
+ones worth taking seriously, since they poison `request.url` and this app is a public unauthenticated
+API. None of this is a reason to leave the bump undone; it is a reason not to treat the count of 8 as
+the measure of the risk.
+
+**Nothing was suppressed.** No advisory is ignored and no threshold was raised. Clearing this is a
+Tier 2 dependency change, which the plan says a human merges.
 
 ---
 
@@ -524,8 +572,9 @@ change. Three backends, three frontends, alerts going to the repository owner on
 Second because it is the highest-severity thing that could already be wrong with nobody knowing.
 Unlike the other scanners, a finding here is an emergency rather than a backlog item, and the
 full-history scan either finds something or permanently retires the worry. PromptShield's history is
-clean across all 108 commits, and ThreatScan's is clean too as of 2026-09-16, scanned for the first
-time. SOCTriage is still unscanned.
+clean across all 108 commits, and ThreatScan's and SOCTriage's are clean too as of 2026-09-16, each
+scanned for the first time. **All three repos are now covered, and none of the three has ever
+committed a secret.**
 
 **Step 3. Build identity in every health response, then post-deploy verification.**
 Third because it needs a code change in all three repos (the commit SHA plumbing) and is therefore
