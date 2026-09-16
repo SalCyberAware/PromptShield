@@ -279,27 +279,32 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 |---|---|---|---|
 | **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml` | `.github/workflows/backend-tests.yml` |
 | **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 1: pytest with coverage |
-| **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 229 `it()` blocks across 13 jest files | 62 test functions across 4 files |
+| **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 152 tests across 13 jest files | 62 test functions across 4 files |
 | **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
 | **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
 | **Type checking** | Yes, mypy strict on `promptshield/` | No | No |
 | **Coverage reporting** | Codecov, from the 3.13 matrix leg | Codecov, backend only | Codecov, backend only |
 | **Deploy config in repo** | `railway.json` (backend), `backend/Procfile`, `backend/runtime.txt` | None in repo. README documents manual Railway and Vercel setup | `backend/Procfile`, `backend/runtime.txt`. No `railway.json` |
-| **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Unverified. Not determinable from the repo, and not checked on the platform | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
-| **Railway build health** | Building and deploying (platform-verified) | Unverified | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
+| **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Yes, both. Railway auto-deploys the backend on push to `main`, observed directly on 2026-09-16: two pushes each produced a restart within about two minutes, confirmed by the `uptime` field in the health response resetting. Vercel frontend is live and serving | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
+| **Railway build health** | Building and deploying (platform-verified) | Building and deploying. Observed redeploying on push and serving a healthy 11-engine fan-out afterwards | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend | Same monitor, run from PromptShield's `uptime.yml` | Same monitor, run from PromptShield's `uptime.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
 | **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | **None** |
-| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. The backend job is red on 5 real findings in the deployed dependency tree; see the open findings section | **None** |
+| **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | **None** |
 | **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | **None** |
 
 Notes on the table:
 
-- Test counts come from counting test function definitions and `it()` blocks in the source. The
-  actual number of collected cases will be higher wherever parametrization is used. SOCTriage's
-  README claims a "71-test pytest suite"; the repo has 62 `def test_` definitions, and the
-  difference is consistent with parametrized cases. Neither number was verified by running the suite.
+- Python test counts come from counting test function definitions in the source. The actual number
+  of collected cases will be higher wherever parametrization is used. SOCTriage's README claims a
+  "71-test pytest suite"; the repo has 62 `def test_` definitions, and the difference is consistent
+  with parametrized cases. Neither Python number was verified by running the suite.
+- ThreatScan's figure is jest's own count from a real run, which is why it is the most trustworthy
+  number in the row. It was previously recorded here as "229 `it()` blocks", which was wrong: that
+  grep descended into `node_modules` and counted test files belonging to dependencies. The suite is
+  152 tests across 13 files. A counting method that can silently include a dependency's tests is not
+  a counting method worth trusting, and the same caveat applies to the Python numbers above.
 - Coverage percentages are not listed. All three upload to Codecov, but the current percentage is a
   property of the Codecov project, not the repo, and is unverified here.
 - "Monitoring: none" was established by searching all three repos for references to uptime and
@@ -340,11 +345,12 @@ checklist item on the next SOCTriage dependency or runtime change.
 
 ---
 
-## Open findings: ThreatScan backend dependencies
+## Resolved findings: ThreatScan backend dependencies
 
 ThreatScan's first `npm audit` run found 5 advisories in the **backend production tree**, the code
-that actually serves requests on Railway. This job is red and is meant to be. Recorded here because
-an open finding that lives only in a CI log is an open finding nobody will remember.
+that actually serves requests on Railway. **All five were cleared on 2026-09-16** in commit
+`24cb4eb`, and the job is green. Recorded here because the first thing this scanner caught was a real
+exposure in a deployed service, which is the whole argument for Tier 1.
 
 | Package | Severity | Direct | Advisory |
 |---|---|---|---|
@@ -354,18 +360,25 @@ an open finding that lives only in a CI log is an open finding nobody will remem
 | `qs` | moderate | transitive | Array-limit bypass, denial of service via attacker-controlled `isBuffer` |
 | `body-parser` | moderate | transitive | Denial of service when an invalid limit silently disables size enforcement |
 
-**Every one has a semver-compatible fix.** None requires a major version bump, so `npm audit fix`
-resolves all 5 inside the ranges already declared in `backend/package.json`.
+**Every one had a semver-compatible fix.** None required a major version bump, so `npm audit fix`
+resolved all 5 inside the ranges already declared in `backend/package.json`, which was left
+untouched. Production dependencies moved: `axios` 1.16.1 to 1.20.0, `express` 4.22.2 to 4.22.3, `qs`
+6.15.2 to 6.16.0, `body-parser` 1.20.5 to 1.20.8, `form-data` 4.0.5 to 4.0.6.
 
 **Nothing was suppressed to make this green.** The threshold was not raised, no advisory was
 ignored, and `--omit=dev` narrows scope to the deployed tree rather than hiding anything: the dev
 tree here is jest, nodemon and supertest, which never run in production. The finding is real and the
 red check is the correct signal.
 
-**Why it is not already fixed.** Bumping dependencies on a deployed service is a Tier 2 change, and
-Tier 2 says a human merges. The lockfile update is a small, reviewable change with the existing
-229-test jest suite behind it, but it is a change to what runs in production and it is not the
-scanner's call, or this document's.
+**How it was verified.** The jest suite mocks axios in every engine test, so 152 passing tests say
+nothing about whether the upgrade works. The real HTTP path was exercised separately: a JSON POST, a
+urlencoded POST, and a GET through the keyless engines locally, then a live scan against the
+redeployed service returning all 11 engines with real data. No engine sets `proxy`, `maxBodyLength`,
+`maxContentLength`, `paramsSerializer` or `transformRequest`, and none passes a plain object as a
+POST body, so the axios fixes in that range land in code paths this service does not use.
+
+This is a reminder worth keeping: a green test suite that mocks its dependency cannot validate a
+dependency upgrade. Something has to touch the real thing.
 
 This is also the first genuine demonstration that Tier 1 works. The scanners found something that
 was already true, already deployed, and invisible from outside, which is the entire premise of the
