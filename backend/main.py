@@ -90,12 +90,34 @@ def _provider_readiness() -> dict[str, bool]:
     }
 
 
+def _build_commit() -> str:
+    """The git commit this process is actually running.
+
+    Railway sets ``RAILWAY_GIT_COMMIT_SHA`` on every deployment that originates
+    from a GitHub push, and exposes it to the running container as well as the
+    build. ``GIT_COMMIT_SHA`` is a platform-neutral override for anywhere that
+    is not Railway. Neither is set during local development, which is what
+    ``"unknown"`` means; it is not an error condition.
+
+    Read per request rather than captured at import so that tests can vary it.
+    The value is fixed for the lifetime of a deployed process either way.
+    """
+    return (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("GIT_COMMIT_SHA")
+        or "unknown"
+    )
+
+
 @app.get("/api/health")
 def health() -> dict[str, object]:
     return {
         "status": "ok",
         "service": "PromptShield API",
         "version": promptshield_version,
+        # Build identity: lets a post-deploy check prove the running build is
+        # the commit that was just pushed. See docs/AUTOMATION_PLAN.md.
+        "commit": _build_commit(),
         "providers": _provider_readiness(),
     }
 

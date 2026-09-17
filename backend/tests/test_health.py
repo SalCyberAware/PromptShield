@@ -54,3 +54,44 @@ def test_health_reflects_configured_key(
     assert providers["anthropic"] is False
     # The secret value must never appear anywhere in the response.
     assert "sk-not-a-real-key" not in client.get("/api/health").text
+
+
+# ── Build identity ───────────────────────────────────────────────────────────
+
+
+def test_health_reports_unknown_commit_when_unset(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local development, where no platform variable is set, still works."""
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("GIT_COMMIT_SHA", raising=False)
+
+    assert client.get("/api/health").json()["commit"] == "unknown"
+
+
+def test_health_reports_railway_commit_sha(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Railway the deployed commit is reported verbatim."""
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "a" * 40)
+
+    assert client.get("/api/health").json()["commit"] == "a" * 40
+
+
+def test_health_commit_falls_back_to_platform_neutral_override(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIT_COMMIT_SHA covers hosts that are not Railway; Railway's wins."""
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("GIT_COMMIT_SHA", "b" * 40)
+    assert client.get("/api/health").json()["commit"] == "b" * 40
+
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "c" * 40)
+    assert client.get("/api/health").json()["commit"] == "c" * 40
+
+
+def test_health_keeps_existing_fields_alongside_commit(client: TestClient) -> None:
+    """The uptime monitor reads status/service/version — adding commit is additive."""
+    body = client.get("/api/health").json()
+
+    assert set(body) == {"status", "service", "version", "commit", "providers"}
