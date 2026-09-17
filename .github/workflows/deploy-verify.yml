@@ -82,9 +82,12 @@ jobs:
                     echo "Live health response:"
                     jq . body.json || cat body.json
                     # The plan also asks that the body be asserted, not just
-                    # the status code, so a 200 carrying junk still fails.
-                    # There is no `set -e` here, so this has to branch: the
+                    # the status code, so a 200 carrying junk still fails: the
                     # right SHA in an unhealthy response is still a failure.
+                    # Branching explicitly rather than leaning on the runner's
+                    # default `bash -e` shell, so the failure carries a reason
+                    # instead of a bare non-zero exit, and so the meaning does
+                    # not change if this step's shell is ever set differently.
                     if ! jq -e '.status == "ok"' body.json > /dev/null; then
                       echo "::error title=Deploy verification failed::$SERVICE is running the pushed commit but its health status is not \"ok\""
                       exit 1
