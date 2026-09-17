@@ -1,0 +1,142 @@
+name: Deploy verification
+
+# Tier "Deploy verification" of PromptShield's docs/AUTOMATION_PLAN.md, and
+# step 3 of its rollout order.
+#
+# The rule: after every deploy, confirm the new build actually shipped.
+#
+# A deploy that reports success and a deploy that produced a working service
+# are different events. In the September 2026 audit, every signal a developer
+# normally looks at was green -- CI passed, the repo was clean, the site
+# returned 200 -- while the live frontend served code from April. Nothing in
+# the toolchain asked the one question a stale build cannot answer correctly:
+# "which commit are you running?"
+#
+# This workflow asks it. the PromptShield backend reports its commit SHA in the health
+# response (from Railway's RAILWAY_GIT_COMMIT_SHA), so after every push to
+# main this polls until the live service reports the commit that was just
+# pushed. If the platform stopped deploying -- disconnected from git, build
+# failing, deploy silently rolled back -- the SHA never converges and this
+# goes red on the first push after it starts happening, instead of three
+# months later.
+#
+# Read-only and unauthenticated: the same public health URL any visitor can
+# hit. Nothing here deploys, writes, or changes state.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Only the newest push matters. If two land close together, the older run
+  # would be waiting for a SHA that is already superseded, and would fail for
+  # a reason that is not a real problem.
+  group: deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend is running the pushed commit
+    runs-on: ubuntu-latest
+    # No checkout: every check is an outbound HTTP request and needs nothing
+    # from the repository.
+    steps:
+      - name: Poll /api/health until it reports ${{ github.sha }}
+        env:
+          HEALTH_URL: https://promptshield-production-1846.up.railway.app/api/health
+          SERVICE: the PromptShield backend
+          EXPECTED_SHA: ${{ github.sha }}
+          # Railway rebuilds from scratch on push. A cold Python build plus restart is minutes, not seconds.
+          # The window is generous on purpose: a false alarm here trains
+          # people to ignore the one check that catches a stale build.
+          DEADLINE_SECONDS: "900"
+          POLL_INTERVAL_SECONDS: "15"
+        run: |
+          set -uo pipefail
+
+          deadline=$(( $(date +%s) + DEADLINE_SECONDS ))
+          attempt=0
+          last_code="(no response)"
+          last_commit="(none reported)"
+
+          while :; do
+            attempt=$(( attempt + 1 ))
+
+            code=$(curl --silent --show-error --location --max-time 20 \
+                     -o body.json -w '%{http_code}' "$HEALTH_URL" || echo "000")
+            last_code="$code"
+
+            if [ "$code" = "200" ]; then
+              reported=$(jq -r 'if type == "object" then (.commit // "") else "" end' \
+                           body.json 2>/dev/null || echo "")
+              if [ -n "$reported" ]; then
+                last_commit="$reported"
+                # Exact match, or the platform reported an abbreviated SHA
+                # that prefixes the full one.
+                case "$EXPECTED_SHA" in
+                  "$reported"*)
+                    echo "Live health response:"
+                    jq . body.json || cat body.json
+                    # The plan also asks that the body be asserted, not just
+                    # the status code, so a 200 carrying junk still fails.
+                    # There is no `set -e` here, so this has to branch: the
+                    # right SHA in an unhealthy response is still a failure.
+                    if ! jq -e '.status == "ok"' body.json > /dev/null; then
+                      echo "::error title=Deploy verification failed::$SERVICE is running the pushed commit but its health status is not \"ok\""
+                      exit 1
+                    fi
+                    echo "::notice title=Deploy verified::$SERVICE is running $reported"
+                    echo "Converged after $attempt attempt(s)."
+                    exit 0
+                    ;;
+                esac
+              fi
+            fi
+
+            now=$(date +%s)
+            if [ "$now" -ge "$deadline" ]; then
+              break
+            fi
+
+            echo "attempt $attempt: HTTP $last_code, commit=$last_commit" \
+                 "(want $EXPECTED_SHA) -- retrying in ${POLL_INTERVAL_SECONDS}s"
+            sleep "$POLL_INTERVAL_SECONDS"
+          done
+
+          echo "::error title=Deploy verification failed::$SERVICE never reported $EXPECTED_SHA"
+          echo
+          echo "After ${DEADLINE_SECONDS}s and $attempt attempts:"
+          echo "  service        : $SERVICE"
+          echo "  health URL     : $HEALTH_URL"
+          echo "  expected commit: $EXPECTED_SHA"
+          echo "  last HTTP code : $last_code"
+          echo "  last commit    : $last_commit"
+          echo
+          case "$last_commit" in
+            "(none reported)")
+              echo "The health response carried no 'commit' field, or the service"
+              echo "did not respond at all. Either the deployed build predates the"
+              echo "build-identity change, or the service is down. Check the last"
+              echo "HTTP code above and the platform's deploy log."
+              ;;
+            unknown)
+              echo "The service is up and is running a build that has the"
+              echo "build-identity code, but RAILWAY_GIT_COMMIT_SHA is not reaching"
+              echo "the container. This is a platform configuration problem, not a"
+              echo "stale build: check that the Railway service is deployed from the"
+              echo "GitHub trigger rather than the CLI, since Railway only sets the"
+              echo "git variables for GitHub-originated deploys."
+              ;;
+            *)
+              echo "The service is up and reporting a DIFFERENT commit. This is the"
+              echo "stale-build failure this check exists to catch. The platform is"
+              echo "serving $last_commit while main is at $EXPECTED_SHA."
+              echo "Check whether the project is still git-connected, whether the"
+              echo "build failed, and whether the deploy was rolled back."
+              ;;
+          esac
+          exit 1
