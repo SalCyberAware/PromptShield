@@ -250,7 +250,8 @@ are written down.
   disconnected Vercel git integration, a Railway service deploying from the CLI instead of the
   GitHub trigger, an unset environment variable, a silently rolled-back deploy: none of it is a
   dependency and none of it lives in a file. `deploy-verify.yml` is the check that covers that
-  class, not this tier.
+  class, not this tier. Turning this tier on promptly produced a new instance of it -- see
+  "What turning it on did to the build queue" below.
 - **Two settings that are not in `dependabot.yml`.** Dependabot *alerts* and Dependabot *security
   updates* are repository settings, not configuration file keys. Both were off in all three repos
   until 2026-09-18, and with them off the `applies-to: security-updates` groups are dead config
@@ -267,6 +268,42 @@ are written down.
   changelog. For a `0.x` package every breaking change is a semver minor, so `uvicorn` 0.30 to 0.53
   lands in the routine weekly group rather than getting the individual PR a major would get. Read
   grouped PRs touching `0.x` packages with that in mind.
+
+**What turning it on did to the build queue.** Worth recording in full, because the failure was not
+in any dependency and the fix is not in any repository.
+
+Enabling Dependabot across three repos opened roughly 21 PR branches in one afternoon. Every
+`dependabot/*` branch triggers a Vercel preview deployment, and the Vercel Hobby tier builds **one
+deployment at a time**. The previews queued, and production builds queued behind them. PromptShield's
+production deploy for `97e7a9d` never ran: the Railway backend deployed normally and reported the new
+commit within a minute, while the Vercel frontend kept serving the previous commit, `e66fd48`, for
+over an hour.
+
+`deploy-verify.yml` caught it, which is the whole point of that check. It is the same stale-build
+class as the September 2026 outage -- a live surface not running what `main` says it runs -- arriving
+through a door nobody had thought about, opened by the automation added one tier earlier. Every other
+signal was green: CI passed, Security passed, the repository was clean, the site returned 200.
+
+The fix is an **Ignored Build Step on each Vercel project that skips `dependabot/*` branches**, now
+set on all three. Preview builds for dependency PRs are the thing worth giving up here: those PRs are
+already gated by the full CI suite, and a preview of a lockfile bump is not what anyone reviews.
+Verified afterwards: the frontend returned to `main`, and deploy verification passed on the last of
+the five security merges.
+
+Two things to carry from it:
+
+- The configuration that caused the stall and the configuration that fixed it are **both invisible
+  from the repository**. Nothing in any of the three projects records that this setting exists or
+  what it is set to. That is exactly the September finding restated, and the only reason it is
+  written down anywhere is this paragraph. A build-queue limit is a shared resource across all three
+  projects, so anything that multiplies branches -- a bot, a long-lived feature branch series, a
+  fork-heavy period -- can starve production deploys again.
+- A smaller observation about the check itself: during the stall, the frontend poll logged `HTTP 403`
+  for its last fifteen attempts, almost certainly Vercel rate-limiting 61 requests from one runner IP
+  over fifteen minutes. The verdict was still correct, because the poll only parses the
+  `build-commit` meta tag on a `200` and keeps the last good read. But the check cannot currently
+  tell "rate-limited" from "down", and a check that cannot distinguish those is one bad week away
+  from crying wolf.
 
 ---
 
