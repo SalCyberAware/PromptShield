@@ -26,4 +26,10 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // vite.config.js runs in Node, not the browser: the build-commit plugin
+    // reads process.env. Without this it trips no-undef under browser globals.
+    files: ['vite.config.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])
