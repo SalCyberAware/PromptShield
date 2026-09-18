@@ -207,8 +207,9 @@ one and use it for all three so there is one mental model, not two.
 - Security advisories bypass the schedule and open immediately.
 
 **Gate.** CI must pass before the PR is considered mergeable. For the repos where CI does not yet
-cover the deployed surface (SOCTriage has no frontend job at all today), the dependency bot should
-not be turned on for that surface until the CI job exists. A green check that tests nothing is worse
+cover the deployed surface, the dependency bot should not be turned on for that surface until the CI
+job exists. SOCTriage was the outstanding case here and no longer is: it gained a frontend job
+(eslint + vite build + vitest) on 2026-09-18, so all three repos now cover both surfaces. A green check that tests nothing is worse
 than no check, because it manufactures confidence.
 
 **Merge is manual, every time.** No auto-merge rules, including for patch updates.
@@ -326,12 +327,12 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 
 | | PromptShield | ThreatScan | SOCTriage |
 |---|---|---|---|
-| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml`, `.github/workflows/deploy-verify.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/deploy-verify.yml` | `.github/workflows/backend-tests.yml`, `.github/workflows/security.yml`, `.github/workflows/deploy-verify.yml` |
-| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 6 across two workflows. `backend-tests.yml` has 1: pytest with coverage. `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) |
-| **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 152 tests across 13 jest files | 62 test functions across 4 files |
-| **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | **None.** No test script in `frontend/package.json`, no frontend CI job |
-| **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | **No.** `eslint` is in `frontend/package.json` but never runs in CI |
-| **Type checking** | Yes, mypy strict on `promptshield/` | No | No |
+| **Workflow files** | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/uptime.yml`, `.github/workflows/deploy-verify.yml` | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `.github/workflows/deploy-verify.yml` | `.github/workflows/backend-tests.yml`, `.github/workflows/backend-quality.yml`, `.github/workflows/frontend.yml`, `.github/workflows/security.yml`, `.github/workflows/deploy-verify.yml` |
+| **CI jobs** | 12 across two workflows. `ci.yml` has 7: test (Python 3.11/3.12/3.13 matrix), lint (ruff), typecheck (mypy strict), backend (clean prod install + pytest), frontend (eslint + vite build + vitest). `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) | 6 across two workflows. `ci.yml` has 2: backend (jest with coverage, `node --check server.js`), frontend (eslint + vite build + vitest). `security.yml` has 4: npm audit (backend), npm audit (frontend), gitleaks, CodeQL (javascript-typescript) | 9 across four workflows, as of 2026-09-18 (`0a9fd3c`). `backend-tests.yml` has 1: pytest with coverage. `backend-quality.yml` has 2: lint (ruff), typecheck (mypy). `frontend.yml` has 1: eslint + vite build + vitest. `security.yml` has 5: pip-audit, npm audit, gitleaks, CodeQL (python), CodeQL (javascript-typescript) |
+| **Backend tests** | 261 test functions in `tests/`, 62 in `backend/tests/` | 152 tests across 13 jest files | 109 test functions across 5 files, collecting 136. Was 62 definitions / 71 collected before the abuse-control and lint/type work of 2026-09-17 and 2026-09-18 |
+| **Frontend tests** | Yes. 2 vitest files, added 2026-09-04 (`78ce0b5`) | Yes. 4 vitest files, added 2026-09-11 (`f6a5925`) | Yes, as of 2026-09-18 (`0a9fd3c`). 1 vitest file, 8 spec blocks collecting 11, added with the two react-hooks fixes they cover. `test` and `test:watch` scripts in `frontend/package.json` |
+| **Lint in CI** | Yes, both sides (ruff + eslint) | Frontend only. No backend linter | Yes, both sides, as of 2026-09-18 (`0a9fd3c`). ruff over `backend/` (`backend/ruff.toml`: line-length 120, target py311, E/F/I/N/W/UP, the same rule set as this repo) and eslint over `frontend/`. Before that, `eslint` sat in `frontend/package.json` and never ran, which is how two `react-hooks/set-state-in-effect` errors survived in `src/App.jsx` |
+| **Type checking** | Yes, mypy strict on `promptshield/` | No | Yes, as of 2026-09-18 (`0a9fd3c`), but **not strict**: mypy over the backend application code (`backend/mypy.ini`), tests excluded. Measured on that tree before choosing: application code 6 errors at default and 24 at `--strict`; with tests, 9 and 174. Strict's extra findings are almost entirely `no-untyped-def` annotation churn, so the config takes the bug-catching half of strict (`warn_return_any`, `warn_unreachable`, `strict_equality`, `no_implicit_optional`, `disallow_untyped_calls`, `check_untyped_defs`) and skips the annotation tax: 7 findings, one more than bare default. `mypy.ini` records the measurements and the four steps to strict |
 | **Coverage reporting** | Codecov, from the 3.13 matrix leg | Codecov, backend only | Codecov, backend only |
 | **Deploy config in repo** | `railway.json` (backend), `backend/Procfile`, `backend/runtime.txt` | None in repo. README documents manual Railway and Vercel setup | `backend/Procfile`, `backend/runtime.txt`. No `railway.json` |
 | **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Yes, both. Railway auto-deploys the backend on push to `main`, observed directly on 2026-09-16: two pushes each produced a restart within about two minutes, confirmed by the `uptime` field in the health response resetting. Vercel frontend is live and serving | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
@@ -435,12 +436,19 @@ diffing the old and new stacks rather than by trusting a green suite.
 - A third, smaller one is visible to clients: 422 validation bodies now carry `input` and `ctx`
   alongside `loc`, `msg` and `type`. Additive, so a client reading the existing fields is unaffected.
 
-**What the tests could not cover.** SOCTriage has no linter and no type checker, so nothing would
-catch a changed function signature, a renamed keyword argument, or a drifted type annotation that the
-71 tests happen not to exercise. The tests also never touch `app.routes`, CORS headers, or the
+**What the tests could not cover.** SOCTriage had no linter and no type checker at the time, so
+nothing would catch a changed function signature, a renamed keyword argument, or a drifted type
+annotation that the 71 tests happen not to exercise. The tests also never touch `app.routes`, CORS headers, or the
 OpenAPI schema, which is precisely where all three real changes landed. They were found by running an
-identical probe against both stacks and diffing the output, not by the suite going green. Adding
-ruff and mypy here is the durable fix; it is recorded as a gap rather than done.
+identical probe against both stacks and diffing the output, not by the suite going green.
+
+**Closed on 2026-09-18** (`0a9fd3c`): ruff and mypy now run over the backend on every push and pull
+request. The gap was real and it was load-bearing -- mypy's very first run found a live 500 that the
+suite did not: `POST /api/triage` passed the intake's optional `ioc_type` straight into
+`EnrichmentResult.ioc_type`, a required string, so omitting the field raised a `ValidationError` in
+the success branch and again in the `except` branch meant to swallow it. Reproduced before fixing
+(200 with the field, 500 without) and now covered by 13 tests. ruff itself found no bug: all 48 of
+its findings were style or modernization.
 
 **On how much these mattered here.** Several of the starlette advisories concern multipart form
 parsing and `StaticFiles`, and SOCTriage serves neither, which was verified by searching the backend
@@ -670,11 +678,21 @@ jobs; see the deploy verification section for what it asserts and what it delibe
 original failure actually happened.
 
 **Step 4. Bring SOCTriage's CI up to the level of the other two.**
-Fourth because SOCTriage is where all four audit findings landed, and it has the weakest CI of the
+Fourth because SOCTriage is where all four audit findings landed, and it had the weakest CI of the
 three: one job, backend only, no lint, no type checking, no frontend tests at all. The headline
 feature that was failing on every click was a frontend and API contract problem, which is exactly
 the surface with zero automated coverage. This is also a prerequisite for step 6, since turning on a
 dependency bot for an untested surface manufactures false confidence.
+
+**Done on 2026-09-18** (`0a9fd3c`): SOCTriage went from 1 CI job to 9, adding ruff and mypy over the
+backend (`backend-quality.yml`) and eslint + vite build + vitest over the frontend
+(`frontend.yml`), plus its first frontend tests. Both gaps paid for themselves immediately. mypy
+found a live 500 on `POST /api/triage` when `ioc_type` was omitted, which the 123-test suite did
+not; eslint's two standing `react-hooks/set-state-in-effect` errors turned out **not** to be live
+bugs, which is worth recording as plainly as the one that was -- the specs written with those fixes
+pass against the old code too. They were one feature away from being real, being the same structure
+that wiped ThreatScan's dropped-file details, but calling them bugs would have been wrong.
+SOCTriage's mypy is not strict; see the comparison table for the measurements behind that choice.
 
 **Step 5. Vulnerability scanning and CodeQL.**
 Fifth because these produce backlogs rather than alerts. They are valuable, but a finding here is
