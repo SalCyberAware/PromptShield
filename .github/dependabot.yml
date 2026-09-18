@@ -1,0 +1,127 @@
+# Dependency update proposals — Tier 2 of docs/AUTOMATION_PLAN.md.
+#
+# Tier 2 means Dependabot PROPOSES and a human merges. There is no auto-merge
+# here and there must not be: the plan rules it out explicitly, including for
+# patch updates, because unattended automation is what produced the September
+# 2026 silent failure in the first place.
+#
+# Shape of the config, per the plan's Tier 2 grouping rules:
+#   - non-major backend updates      -> one grouped PR per week
+#   - non-major frontend updates     -> one grouped PR per week
+#   - GitHub Actions bumps           -> one grouped PR per month
+#   - major bumps                    -> one PR per package, never grouped,
+#                                       because a major is a reading task
+#   - security advisories            -> their own group, opened as soon as the
+#                                       advisory lands rather than on schedule
+#
+# Majors fall out of the weekly groups because those groups only claim
+# "minor" and "patch"; anything left ungrouped gets its own PR automatically.
+#
+# The security group is deliberately a separate group rather than a separate
+# label: Dependabot puts the group name in the PR title and branch, and labels
+# are per-ecosystem rather than per-group, so the group name is the only thing
+# that actually makes an advisory fix visibly distinct from a routine bump at a
+# glance.
+#
+# `open-pull-requests-limit` caps VERSION updates only. Security updates are not
+# subject to it, so a conservative limit here cannot suppress an advisory fix.
+#
+# Scheduling is staggered across the three repos -- PromptShield Monday,
+# ThreatScan Tuesday, SOCTriage Wednesday -- so a quiet week does not arrive as
+# one Monday pile.
+
+version: 2
+
+updates:
+  # ── Python: the published promptshield package (pyproject.toml) ────────────
+  # Separate from backend/ on purpose. This is the library that gets published
+  # and installed by users; backend/ is the deployed web service. They pin
+  # overlapping packages for different reasons, so a bump that is right for one
+  # is not automatically right for the other.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      package-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      package-security-advisories:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── Python: the deployed web backend (requirements*.txt) ──────────────────
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "python", "backend"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      backend-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      backend-security-advisories:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── Frontend (npm) ────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "javascript", "frontend"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      frontend-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      frontend-security-advisories:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  # Monthly, per the plan. A pinned action version goes stale silently: nothing
+  # in CI fails when actions/checkout@v6 becomes two majors old, so the only
+  # thing that surfaces it is a bot that reads the workflow files.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-security-advisories:
+        applies-to: security-updates
+        patterns: ["*"]
