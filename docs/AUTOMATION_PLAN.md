@@ -197,6 +197,15 @@ grouping is more expressive and all three repos have a backend and a frontend wi
 lockfiles, but Dependabot is native to GitHub and needs no app install. Either is acceptable. Pick
 one and use it for all three so there is one mental model, not two.
 
+**Chosen on 2026-09-18: Dependabot**, in all three repos. Native to GitHub, no app install, and its
+`groups` key with `applies-to` turned out to express everything this section asks for. Grouping by
+`update-types: ["minor", "patch"]` leaves majors ungrouped, which is what makes "one PR per major
+package" fall out automatically rather than needing a rule of its own. Advisory fixes are separated
+from routine bumps with a second group per ecosystem rather than with a label, because Dependabot
+labels are per-ecosystem and cannot vary per group, while the group name appears in both the PR
+title and the branch name. Schedules are staggered Monday, Tuesday, Wednesday across the three
+repos so a quiet week does not arrive as one Monday pile.
+
 **Grouping.** The goal is few PRs that are each easy to judge, not one PR per package.
 
 - Group all non-major backend dependencies into one weekly PR per repo.
@@ -213,6 +222,51 @@ job exists. SOCTriage was the outstanding case here and no longer is: it gained 
 than no check, because it manufactures confidence.
 
 **Merge is manual, every time.** No auto-merge rules, including for patch updates.
+
+**What a dependency bot does not cover.** Recorded here because the value of this tier is easy to
+overestimate, and a bot that appears to be watching everything is worse than one whose blind spots
+are written down.
+
+- **Dev-tree advisories are invisible to `npm audit --omit=dev`.** This is the largest gap the
+  rollout actually exposed, and it was in Tier 1 rather than Tier 2. `security.yml` audits the
+  production tree only, by design, so nothing was watching the dev tree. Turning on Dependabot
+  alerts on 2026-09-18 immediately surfaced **8 open advisories in PromptShield's frontend and 11 in
+  ThreatScan's, every one of them scoped `development`** -- `postcss`, `js-yaml`, `browserslist`,
+  `brace-expansion`, `vite`, `vitest`. A build toolchain is still code that runs, on a developer
+  machine and on a CI runner with a token. Dependabot alerts cover this; the `--omit=dev` audit
+  never will. Whether to widen the audit is a separate decision, but the blind spot should not be
+  rediscovered.
+- **Transitive dependencies held by a parent.** Dependabot proposes updates to what a manifest
+  declares. A vulnerable transitive package pinned by its parent is not directly bumpable: the
+  parent has to release first. That is exactly the shape of the September 2026 fastapi bump, where
+  the whole starlette advisory batch was cleared by moving fastapi rather than starlette.
+  `pip-audit` and `npm audit` in `security.yml` are what actually see those, which is why Tier 2
+  does not replace Tier 1.
+- **Anything not in a manifest.** The pinned Python in `runtime.txt`, the Node version in the
+  workflow files, the Railway and Vercel build images, the gitleaks release pinned by SHA256 in
+  `security.yml`, and any tool installed by a `run:` step are all invisible to it. So is the
+  `MISE_PYTHON_GITHUB_ATTESTATIONS=false` workaround holding SOCTriage's Railway build together.
+- **Platform-side configuration**, which is where most of September's failures actually lived. A
+  disconnected Vercel git integration, a Railway service deploying from the CLI instead of the
+  GitHub trigger, an unset environment variable, a silently rolled-back deploy: none of it is a
+  dependency and none of it lives in a file. `deploy-verify.yml` is the check that covers that
+  class, not this tier.
+- **Two settings that are not in `dependabot.yml`.** Dependabot *alerts* and Dependabot *security
+  updates* are repository settings, not configuration file keys. Both were off in all three repos
+  until 2026-09-18, and with them off the `applies-to: security-updates` groups are dead config
+  that silently proposes nothing. Enabled through the API on all three and verified. Worth
+  re-checking if a repo is ever forked or transferred.
+- **`labels:` only applies labels that already exist.** Dependabot does not create them. The first
+  wave of PRs on 2026-09-18 came through with the labels that happened to pre-exist -- two of three
+  in PromptShield, none at all in ThreatScan or SOCTriage -- while the rest of the `labels:` config
+  sat inert. The six labels were created by API in all three repos afterwards; PRs opened before
+  that keep their original set. This is also why the security/version split is expressed as a group
+  name rather than a label: the group name lands in the PR title and branch and needs nothing to
+  exist first.
+- **Semver is read literally.** `update-types: ["minor", "patch"]` reads the version string, not the
+  changelog. For a `0.x` package every breaking change is a semver minor, so `uvicorn` 0.30 to 0.53
+  lands in the routine weekly group rather than getting the individual PR a major would get. Read
+  grouped PRs touching `0.x` packages with that in mind.
 
 ---
 
@@ -339,7 +393,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Railway build health** | Building and deploying (platform-verified) | Building and deploying. Observed redeploying on push and serving a healthy 11-engine fan-out afterwards | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
 | **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend. Post-deploy SHA verification of backend and frontend on every push, from this repo's own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification of backend and frontend from its own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification of backend and frontend from its own `deploy-verify.yml` |
-| **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
+| **Dependency bot** | Dependabot, `.github/dependabot.yml`, as of 2026-09-18 (`e66fd48`). 4 ecosystems: pip `/`, pip `/backend`, npm `/frontend`, github-actions. Weekly on Mondays, actions monthly. Version-update limit 3, 2 for actions | Dependabot, as of 2026-09-18 (`c830559`). 3 ecosystems: npm `/backend`, npm `/frontend`, github-actions. No pip entry because there is no Python in this repo. Weekly on Tuesdays, actions monthly | Dependabot, as of 2026-09-18 (`c706722`). 3 ecosystems: pip `/backend`, npm `/frontend`, github-actions. Weekly on Wednesdays, actions monthly |
 | **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean |
 | **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | Yes. pip-audit over `backend/requirements.txt` and `npm audit --omit=dev` over the frontend production tree. Both clean as of 2026-09-16, after the fastapi bump described below |
 | **CodeQL** | Yes. `python` and `javascript-typescript`, on push, pull request, and weekly. Alerts go to the Security tab and do not fail the workflow | Yes. `javascript-typescript`. Zero open alerts on first run | Yes. `python` and `javascript-typescript`. Zero open alerts on first run |
@@ -703,6 +757,41 @@ spending the first week triaging static analysis output while the deployed servi
 Sixth, and deliberately last among the automation items, because it is the only one that proposes
 changes to code. It should not be switched on until CI is trustworthy enough that a green check on a
 dependency PR actually means something, which is what steps 4 and 5 establish.
+
+**Done on 2026-09-18**: Dependabot in all three repos (`e66fd48`, `c830559`, `c706722`), ten
+ecosystem entries in total, each config validated against the published dependabot-2.0 schema before
+committing because an invalid one fails silently rather than loudly. Dependabot alerts and security
+updates were off in all three repos and were enabled at the same time; without them the advisory
+groups propose nothing.
+
+Expect a one-time backlog rather than the steady state in the first fortnight. Adding the config
+triggers an immediate first run per ecosystem rather than waiting for the scheduled day, and within
+minutes it had opened 8 PRs in ThreatScan, 8 in SOCTriage and 5 in PromptShield. Those per-repo
+totals are not a coincidence: `open-pull-requests-limit` is per ecosystem entry, not per repo, so
+the real ceiling on open version PRs is the sum across entries -- 8 for the repos with 3+3+2 and 11
+for PromptShield with 3+3+3+2. The limit caps *open* PRs rather than PRs per week, so the queue
+drains at whatever rate they get reviewed; it is a standing ceiling, not a weekly flood. Steady
+state once the backlog clears should be roughly three to five grouped PRs a week across all three
+repos.
+
+Dependabot does raise `>=` floors in a `requirements.txt`, contrary to what was assumed when this
+section was first drafted: SOCTriage got `update pytest requirement from >=8.0 to >=9.1.1` and
+`update sqlalchemy requirement from >=2.0.30 to >=2.0.53` in that first run. PromptShield's two pip
+entries had not produced a run at the time of writing, so whether PEP 621 `>=` constraints in a
+`pyproject.toml` behave the same way is still unconfirmed here; its scheduled day is Monday.
+
+The first run also justified the gate immediately. SOCTriage's grouped `backend-minor-and-patch` PR
+bundled `httpx` 0.27.2 -> 0.28.1, a semver *minor* for a `0.x` package that removes the `proxies`
+argument from `AsyncClient.__init__`, which the pinned `anthropic==0.34.2` passes internally. The
+whole suite errored on collection and `pytest` went red. That is the literal-semver caveat above,
+found on day one rather than in a postmortem, and it is coupled to the separate `anthropic` 0.34 ->
+1.7 major PR: the two need reviewing together, which is precisely the reading task the plan reserves
+for majors.
+
+ThreatScan carries twelve stale majors, `express` 4 to 5, `react` 18 to 19, `vite` 5 to 8 and
+`vitest` 3 to 5 among them. Those are migrations, not dependency traffic, and should be scheduled as
+their own work rather than merged off the back of a green check. This section already says a major
+is a reading task; twelve at once is the case that rule exists for.
 
 **Then, separately: the eval harness.**
 Not numbered with the rest because it is a build, not a configuration. It is the largest item on
