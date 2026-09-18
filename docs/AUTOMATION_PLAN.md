@@ -5,10 +5,10 @@
 **Status:** Tier 1 is implemented across all three repos as of 2026-09-16, and every scanner job is
 green. Each repo has its own `security.yml`; the uptime monitor for all six deployed surfaces runs
 from PromptShield's `uptime.yml`. Every advisory the scanners found on first run has been fixed.
-**Backend deploy verification is live as of 2026-09-17:** all three backends report the commit SHA
-they are running, and each repo has a `deploy-verify.yml` that polls its own backend after every
-push to `main` until the live service reports that commit. Tiers 2 and 3, frontend build identity,
-and the enterprise gaps are still plans.
+**Deploy verification is live on all six surfaces as of 2026-09-18:** every backend reports the
+commit SHA it is running and every frontend bakes its into the served HTML, and each repo has a
+`deploy-verify.yml` that polls both of its own surfaces after every push to `main` until each
+reports that commit. Tiers 2 and 3 and the enterprise gaps are still plans.
 
 ---
 
@@ -286,13 +286,30 @@ subscribe to its own repository's push events. Watching the other two from here 
 cross-repo `repository_dispatch` and a personal access token in all three, which is more standing
 credential than a deploy check is worth.
 
+**Frontend build identity: DONE 2026-09-18.**
+
+A frontend cannot report a SHA from a request handler, because there is no handler: the deployed
+artifact is a directory of static files. The equivalent is to bake the SHA into the artifact at
+build time. All three frontends now do, through a small Vite plugin that injects
+`<meta name="build-commit" content="...">` into `index.html` from `VERCEL_GIT_COMMIT_SHA`, with
+`GIT_COMMIT_SHA` as a platform-neutral override and `"unknown"` when neither is set.
+
+The meta tag rather than a `/version.json` on purpose: `index.html` is the document whose staleness
+*is* the failure, because it names the content-hashed asset bundles. A `version.json` is a separate
+file that can be served fresh while `index.html` is stale, which would let the check pass on a stale
+site — the precise thing it exists to prevent.
+
+**This requires "Enable access to System Environment Variables" to be ticked in each Vercel
+project's settings.** Without it the build sees no SHA and the page reports `"unknown"`, which the
+check reports as a platform configuration problem rather than a stale build. Verified on 2026-09-18:
+the setting is already on for all three projects, and each served the pushed SHA within about a
+minute of the push, so nothing needed changing.
+
+This half matters more than the backend half, not less: failure 3 was a *frontend* serving April's
+code, and a stale static build is exactly what a 200 check cannot see.
+
 **What this still requires that does not exist yet:**
 
-- Each frontend needs the same: a build-time-injected SHA, exposed somewhere the check can read it,
-  such as a meta tag or a small `/version.json` emitted by the build. Vercel exposes
-  `VERCEL_GIT_COMMIT_SHA` at build time for this. This matters more than the backend case, not
-  less: failure 3 was a *frontend* serving April's code, and a stale static build is exactly what a
-  200 check cannot see.
 - Step 5 of the check above, hitting one real functional endpoint and asserting its shape, is
   deliberately not implemented. Each repo's real endpoints fan out to paid third-party APIs
   (ThreatScan to eleven threat-intel providers, PromptShield and SOCTriage to LLM providers), so
@@ -320,7 +337,7 @@ platform is marked unverified. ThreatScan's deploy state is the one gap: it was 
 | **Deploy git-connected** | Yes, both. Railway and Vercel are git-connected and deploying (platform-verified) | Yes, both. Railway auto-deploys the backend on push to `main`, observed directly on 2026-09-16: two pushes each produced a restart within about two minutes, confirmed by the `uptime` field in the health response resetting. Vercel frontend is live and serving | Yes, both. Vercel is git-connected to `main` and auto-deploying, verified by a push triggering a build within 30 seconds. It was disconnected as of the 2026-09-11 audit |
 | **Railway build health** | Building and deploying (platform-verified) | Building and deploying. Observed redeploying on push and serving a healthy 11-engine fan-out afterwards | Fixed. Was failing since June on a mise attestation failure for the pinned Python version, worked around with `MISE_PYTHON_GITHUB_ATTESTATIONS=false`. See the technical debt section |
 | **Database** | None | None | Postgres on Railway, attached with `DATABASE_URL` set (platform-verified: `created_at` returns with a `Z` suffix). `backend/database.py` still falls back to `sqlite:///./soctriage.db` when `DATABASE_URL` is unset, which is correct for local development but was the ephemeral-storage bug in production |
-| **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend. Post-deploy SHA verification on every push, from this repo's own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification from its own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification from its own `deploy-verify.yml` |
+| **Monitoring** | Uptime and health, every 15 minutes, from `uptime.yml` in this repo. Backend health endpoint plus frontend. Post-deploy SHA verification of backend and frontend on every push, from this repo's own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification of backend and frontend from its own `deploy-verify.yml` | Same uptime monitor, run from PromptShield's `uptime.yml`. Post-deploy SHA verification of backend and frontend from its own `deploy-verify.yml` |
 | **Dependency bot** | **None.** No `dependabot.yml` or `renovate.json` | **None** | **None** |
 | **Secret scanning** | Yes. gitleaks over the full git history on push, pull request, and weekly. Pinned release, checksum-verified, `--redact` so findings are not republished into a public Actions log | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean | Yes, same configuration. History scanned for the first time on 2026-09-16 and clean |
 | **Vulnerability scanning** | Yes. pip-audit over both Python trees (root package and `backend/requirements.txt`) and `npm audit --omit=dev` over the frontend production tree, on push, pull request, and weekly | Yes. `npm audit --omit=dev` over the backend and frontend production trees as two separate jobs. Both clean as of 2026-09-16, after the backend bump described below | Yes. pip-audit over `backend/requirements.txt` and `npm audit --omit=dev` over the frontend production tree. Both clean as of 2026-09-16, after the fastapi bump described below |
@@ -646,10 +663,11 @@ plumbing) and is therefore slower than steps 1 and 2, but it is the step that sp
 the stale-build failure mode. Once a health response reports the SHA it is running, a five-line
 check after every deploy makes a disconnected Vercel project impossible to miss.
 
-Shipped as a `commit` field in all three health responses plus a `deploy-verify.yml` in each repo;
-see the deploy verification section for what it asserts and what it deliberately does not. **The
-frontend half is not done.** Three of the six deployed surfaces still cannot be asked what they are
-running, and they are the three where the original failure actually happened.
+Shipped as a `commit` field in all three health responses, a `<meta name="build-commit">` tag in all
+three frontends, and a `deploy-verify.yml` in each repo that checks both of its surfaces in parallel
+jobs; see the deploy verification section for what it asserts and what it deliberately does not.
+**All six deployed surfaces can now be asked what they are running**, including the three where the
+original failure actually happened.
 
 **Step 4. Bring SOCTriage's CI up to the level of the other two.**
 Fourth because SOCTriage is where all four audit findings landed, and it has the weakest CI of the

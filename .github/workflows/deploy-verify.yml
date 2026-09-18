@@ -20,8 +20,15 @@ name: Deploy verification
 # goes red on the first push after it starts happening, instead of three
 # months later.
 #
-# Read-only and unauthenticated: the same public health URL any visitor can
-# hit. Nothing here deploys, writes, or changes state.
+#
+# Both deployed surfaces are checked, in parallel jobs, so a red run names
+# which one is stale rather than just saying the deploy failed. The backend
+# reports its SHA in the health response (Railway's RAILWAY_GIT_COMMIT_SHA);
+# the frontend bakes its into a <meta name="build-commit"> tag in index.html
+# at build time (Vercel's VERCEL_GIT_COMMIT_SHA). The frontend is the surface
+# the September 2026 outage actually hit.
+# Read-only and unauthenticated: the same public URLs any visitor can hit.
+# Nothing here deploys, writes, or changes state.
 
 on:
   push:
@@ -140,6 +147,99 @@ jobs:
               echo "serving $last_commit while main is at $EXPECTED_SHA."
               echo "Check whether the project is still git-connected, whether the"
               echo "build failed, and whether the deploy was rolled back."
+              ;;
+          esac
+          exit 1
+
+  frontend:
+    name: Frontend is serving the pushed commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poll https://prompt-shield-mocha.vercel.app until its HTML reports ${{ github.sha }}
+        env:
+          FRONTEND_URL: https://prompt-shield-mocha.vercel.app
+          SERVICE: the PromptShield frontend
+          EXPECTED_SHA: ${{ github.sha }}
+          # Vercel builds are quick, but the same window as the backend keeps
+          # the two halves consistent and leaves room for CDN propagation.
+          DEADLINE_SECONDS: "900"
+          POLL_INTERVAL_SECONDS: "15"
+        run: |
+          set -uo pipefail
+
+          deadline=$(( $(date +%s) + DEADLINE_SECONDS ))
+          attempt=0
+          last_code="(no response)"
+          last_commit="(none reported)"
+
+          while :; do
+            attempt=$(( attempt + 1 ))
+
+            # Cache-bust: a CDN edge holding the old index.html is exactly the
+            # staleness this check exists to detect, so do not let the runner's
+            # own request be answered from a cache we could have avoided.
+            code=$(curl --silent --show-error --location --max-time 20 \
+                     -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' \
+                     -o page.html -w '%{http_code}' "$FRONTEND_URL" || echo "000")
+            last_code="$code"
+
+            if [ "$code" = "200" ]; then
+              reported=$(grep -o '<meta name="build-commit" content="[^"]*"' page.html \
+                           | sed 's/.*content="//; s/"$//' | head -1 || true)
+              if [ -n "$reported" ]; then
+                last_commit="$reported"
+                # Exact match, or an abbreviated SHA that prefixes the full one.
+                case "$EXPECTED_SHA" in
+                  "$reported"*)
+                    echo "::notice title=Deploy verified::$SERVICE is serving $reported"
+                    echo "Converged after $attempt attempt(s)."
+                    exit 0
+                    ;;
+                esac
+              fi
+            fi
+
+            now=$(date +%s)
+            if [ "$now" -ge "$deadline" ]; then
+              break
+            fi
+
+            echo "attempt $attempt: HTTP $last_code, build-commit=$last_commit" \
+                 "(want $EXPECTED_SHA) -- retrying in ${POLL_INTERVAL_SECONDS}s"
+            sleep "$POLL_INTERVAL_SECONDS"
+          done
+
+          echo "::error title=Deploy verification failed::$SERVICE never served $EXPECTED_SHA"
+          echo
+          echo "After ${DEADLINE_SECONDS}s and $attempt attempts:"
+          echo "  service        : $SERVICE"
+          echo "  frontend URL   : $FRONTEND_URL"
+          echo "  expected commit: $EXPECTED_SHA"
+          echo "  last HTTP code : $last_code"
+          echo "  last commit    : $last_commit"
+          echo
+          case "$last_commit" in
+            "(none reported)")
+              echo "The served HTML carried no build-commit meta tag, or the site did"
+              echo "not respond at all. Either the deployed build predates the"
+              echo "build-identity change, or the site is down. Check the last HTTP"
+              echo "code above and the Vercel deployment log."
+              ;;
+            unknown)
+              echo "The site is up and is serving a build that has the build-identity"
+              echo "plugin, but VERCEL_GIT_COMMIT_SHA was not set when it was built."
+              echo "This is a platform configuration problem, not a stale build:"
+              echo "check that \\"Enable access to System Environment Variables\\" is"
+              echo "ticked in the Vercel project settings, and that the deployment"
+              echo "came from the git integration rather than a bare CLI upload."
+              ;;
+            *)
+              echo "The site is up and serving a DIFFERENT commit. This is the"
+              echo "stale-build failure this check exists to catch, and the exact"
+              echo "shape of the September 2026 outage: Vercel is serving"
+              echo "$last_commit while main is at $EXPECTED_SHA."
+              echo "Check whether the project is still git-connected to main, whether"
+              echo "the build failed, and whether the deploy was rolled back."
               ;;
           esac
           exit 1
