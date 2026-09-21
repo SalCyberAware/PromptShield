@@ -23,3 +23,11 @@
 # the offending line verbatim, which reproduced the pattern and made the ignore
 # file itself a finding.
 9365de9c0d87244836362edcfb5c786275a3f3fb:promptshield/model_config.py:generic-api-key:83
+
+# ── 288505f, .gitleaksignore:11 ───────────────────────────────────────────────
+# The first version of this very file quoted the offending line verbatim while
+# explaining it, which reproduced the pattern and made the ignore file its own
+# finding. 53554be rewrote the explanation as prose. This entry retires the
+# lingering copy in 288505f, for the same reason as the entry above: the scan
+# covers the full history, and that commit is already published.
+288505f3ce8a54d7c8799faa5091a8e9f73bf493:.gitleaksignore:generic-api-key:11
