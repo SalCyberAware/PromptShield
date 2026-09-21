@@ -6,18 +6,20 @@
 # in a later commit.
 #
 # ── 9365de9, promptshield/model_config.py:83 ──────────────────────────────────
-# generic-api-key fired on
+# generic-api-key fired on a constant that pinned the Anthropic scan-target
+# model. The value is a published model identifier, not a credential. The rule
+# keys off an identifier containing the letters A-P-I sitting next to a
+# high-entropy value; the very same model string assigned to ANTHROPIC_JUDGE_MODEL
+# two lines earlier was never flagged, which is what identifies the constant's
+# name as the trigger rather than anything about the value.
 #
-#     ANTHROPIC_API_TARGET_MODEL = "claude-haiku-4-5-20251001"
-#
-# That is a pinned model id, not a credential. The rule keys off an identifier
-# containing "API" next to a high-entropy string; the same value assigned to
-# ANTHROPIC_JUDGE_MODEL two lines earlier was not flagged, which is what
-# identifies the name as the trigger rather than the value.
-#
-# 502746f already renamed the constant to ANTHROPIC_SCAN_TARGET_MODEL, so the
-# working tree is clean and no new commit can reproduce this. The entry exists
+# 502746f renamed that constant to ANTHROPIC_SCAN_TARGET_MODEL, so the working
+# tree is clean and no new commit can reproduce the finding. This entry exists
 # only because the Security job scans the full history, where 9365de9 still
 # carries the old name. Clearing it properly would mean rewriting published
-# history on main, which is not worth it for a false positive.
+# history on main, which is not worth doing for a false positive.
+#
+# Deliberately described in prose above: an earlier version of this file quoted
+# the offending line verbatim, which reproduced the pattern and made the ignore
+# file itself a finding.
 9365de9c0d87244836362edcfb5c786275a3f3fb:promptshield/model_config.py:generic-api-key:83
