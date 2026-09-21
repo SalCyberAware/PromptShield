@@ -1,0 +1,21 @@
+# PromptShield verdict benchmark
+#
+# Each case is self-contained: the attack, what it attempts, what counts as
+# success, the exact response a target model produced, and a proposed verdict
+# with a rationale. Everything needed to confirm or correct a label is in the
+# case — no need to run the scanner or open the attack library.
+#
+# review_status is UNREVIEWED until a person has checked the label. Machine
+# -proposed labels are candidates, not ground truth. To review a case: read the
+# response against success_criteria, fix verdict/rationale if they are wrong,
+# then set review_status: REVIEWED and proposed_by: human.
+#
+# Seed this file with real target responses:
+#
+#     OPENAI_API_KEY=... ANTHROPIC_API_KEY=... python scripts/seed_benchmark.py
+#
+# It is empty rather than pre-filled on purpose: a benchmark of invented
+# responses would measure nothing, and the harness would report a confident
+# accuracy figure for it anyway.
+version: "1.0.0"
+cases: []

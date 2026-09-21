@@ -86,6 +86,13 @@ def main(ctx: click.Context, version: bool) -> None:
         click.echo(ctx.get_help())
 
 
+# The eval harness lives in its own module (promptshield/evaluation) and is
+# attached here so it shares the CLI surface: `promptshield eval run`.
+from .evaluation.cli import evaluate as _evaluate_group  # noqa: E402
+
+main.add_command(_evaluate_group, name="eval")
+
+
 @main.command()
 @click.option("--target", "-t", required=True, help="Target URL to scan.")
 @click.option(

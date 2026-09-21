@@ -68,7 +68,7 @@ promptshield = "promptshield.cli:main"
 include = ["promptshield*"]
 
 [tool.setuptools.package-data]
-promptshield = ["attacks/data/*.yaml", "attacks/data/*.json", "reporters/templates/*.j2"]
+promptshield = ["attacks/data/*.yaml", "attacks/data/*.json", "reporters/templates/*.j2", "evaluation/data/*.yaml", "evaluation/data/*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

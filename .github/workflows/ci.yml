@@ -75,6 +75,42 @@ jobs:
           pip install -e ".[dev]"
       - name: Run mypy strict
         run: mypy promptshield/
+
+  # ── Verdict benchmark (issue #3) ────────────────────────────────────────────
+  # Runs the eval harness with MOCKED judges, so every push costs nothing.
+  #
+  # Be clear about what this does and does not prove. With a stubbed judge, the
+  # judge's accuracy is a constant the stub decides -- so this job cannot tell
+  # you whether Claude got better or worse at judging. What it does test is
+  # everything around the judge: that the benchmark file parses, that cases map
+  # onto real attacks, that the pattern floor and _combine_verdicts still turn a
+  # verdict into the same status, that scoring and the per-class metrics are
+  # right, and that the baseline gate actually fails when accuracy drops. Those
+  # are the parts a refactor breaks, and they break silently.
+  #
+  # Judge quality is measured by the LIVE run, which costs money and is therefore
+  # run deliberately -- on a model swap, a judge-prompt change, or an attack
+  # change -- not on every push. See docs/EVAL_HARNESS.md.
+  benchmark:
+    name: Verdict benchmark (mocked judges, no API spend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      # No API keys are provided to this job, by design: if a code path ever
+      # tried to reach a real provider, it would fail here rather than quietly
+      # start billing on every push.
+      - name: Run the benchmark against the reviewed subset
+        run: python -m pytest tests/test_eval_ci_gate.py -v
   backend:
     name: Backend (clean prod install + tests)
     runs-on: ubuntu-latest
