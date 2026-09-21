@@ -321,7 +321,8 @@ class TestRunScanAnalyzerWiring:
 
 
 def _mock_ai_analyzer(name: str, verdict: AnalyzerVerdict | None = None,
-                      side_effect: BaseException | None = None) -> MagicMock:
+                      side_effect: BaseException | None = None,
+                      model: str | None = None) -> MagicMock:
     """Build a MagicMock that quacks like an AI analyzer instance.
 
     Either ``verdict`` is returned from ``analyze()``, or ``side_effect`` is
@@ -330,6 +331,11 @@ def _mock_ai_analyzer(name: str, verdict: AnalyzerVerdict | None = None,
     """
     instance = MagicMock()
     instance.name = name
+    # A real analyzer carries the model id it runs; provenance reads it from the
+    # live instance. Left as a MagicMock attribute when unset, which the
+    # recorder ignores because it is not a str.
+    if model is not None:
+        instance.model = model
     if side_effect is not None:
         instance.analyze = AsyncMock(side_effect=side_effect)
     else:
@@ -903,3 +909,117 @@ class TestRunScanErrorHandling:
         assert scan.status == ScanStatus.COMPLETED
         assert scan.attacks_run == 1
         assert scan.transcripts[0].response == ""
+
+
+# ── Provenance (issue #2) ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestRunScanProvenance:
+    """Every scan must record what produced its verdicts."""
+
+    async def test_records_version_library_and_timestamp(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        from promptshield import __version__
+
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        scan = await scanner.run_scan(scan_id="SCAN-1", library_version="1.1.0")
+
+        assert scan.provenance is not None
+        assert scan.provenance.promptshield_version == __version__
+        assert scan.provenance.attack_library_version == "1.1.0"
+        assert scan.provenance.recorded_at is not None
+
+    async def test_records_the_model_of_the_judge_that_produced_the_verdict(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        claude = _mock_ai_analyzer(
+            "claude_analyzer",
+            verdict=AnalyzerVerdict(
+                analyzer_name="claude_analyzer",
+                success=True,
+                confidence_score=0.92,
+                reasoning="leak",
+            ),
+            model="claude-sonnet-4-6",
+        )
+
+        scan = await scanner.run_scan(scan_id="SCAN-2", analyzers=[claude])
+
+        assert scan.provenance is not None
+        assert scan.provenance.judge_models == {"claude_analyzer": "claude-sonnet-4-6"}
+
+    async def test_a_judge_that_never_produced_a_verdict_is_not_recorded(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """Only judges that actually decided something may claim credit."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        failing = _mock_ai_analyzer(
+            "claude_analyzer", side_effect=RuntimeError("down"), model="claude-sonnet-4-6"
+        )
+        winner = _mock_ai_analyzer(
+            "gemini_analyzer",
+            verdict=AnalyzerVerdict(
+                analyzer_name="gemini_analyzer",
+                success=False,
+                confidence_score=0.8,
+                reasoning="held",
+            ),
+            model="gemini-2.0-flash-001",
+        )
+
+        scan = await scanner.run_scan(scan_id="SCAN-3", analyzers=[failing, winner])
+
+        assert scan.provenance is not None
+        assert scan.provenance.judge_models == {"gemini_analyzer": "gemini-2.0-flash-001"}
+        assert "claude_analyzer" not in scan.provenance.judge_models
+
+    async def test_pattern_only_scan_records_no_judge_models(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """The pattern floor is a matcher, not a model; it must not appear."""
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+
+        scan = await scanner.run_scan(scan_id="SCAN-4", analyzers=[])
+
+        assert scan.provenance is not None
+        assert scan.provenance.judge_models == {}
+
+    async def test_library_version_defaults_to_unknown_not_a_stale_number(
+        self, sample_attack_llm01: Attack, successful_response_llm01: str
+    ) -> None:
+        """A caller that passes nothing must not have a version invented for it."""
+        from promptshield.attacks.library import UNKNOWN_VERSION
+
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
+        scan = await scanner.run_scan(scan_id="SCAN-5")
+
+        assert scan.library_version == UNKNOWN_VERSION
+        assert scan.provenance is not None
+        assert scan.provenance.attack_library_version == UNKNOWN_VERSION
+
+    async def test_provenance_is_recorded_even_when_the_scan_fails(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        """A partial result still has to say what produced it.
+
+        Driven through on_progress, which runs outside the per-attack guard and
+        so reaches the outer except — the same seam the existing failure tests
+        use. A raising send_attack would not do it: that is caught per attack and
+        recorded as an error transcript, leaving the scan COMPLETED.
+        """
+        scanner = _FakeScanner(_target(), [sample_attack_llm01], ["response"])
+
+        def bad_progress(current: int, total: int, attack: Attack) -> None:
+            raise RuntimeError("progress callback exploded")
+
+        scan = await scanner.run_scan(
+            scan_id="SCAN-6", library_version="1.1.0", on_progress=bad_progress
+        )
+
+        assert scan.status == ScanStatus.FAILED
+        assert scan.provenance is not None
+        assert scan.provenance.attack_library_version == "1.1.0"
+        assert scan.provenance.recorded_at is not None

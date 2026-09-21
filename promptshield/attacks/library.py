@@ -8,6 +8,9 @@ import yaml
 
 from ..models import Attack, AttackCategory, Severity
 
+#: Recorded when the library on disk declares no version of its own.
+UNKNOWN_VERSION = "unknown"
+
 
 class AttackLibrary:
     """Loads and manages the PromptShield attack library."""
@@ -17,6 +20,8 @@ class AttackLibrary:
             library_path = Path(__file__).parent / "data" / "attacks_v1.yaml"
         self.library_path = library_path
         self.attacks: list[Attack] = []
+        #: Version of the attack set on disk, recorded in every scan's provenance.
+        self.version: str = UNKNOWN_VERSION
         self._load()
 
     def _load(self) -> None:
@@ -27,6 +32,10 @@ class AttackLibrary:
 
         with open(self.library_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
+        # A library with no declared version is a provenance gap, not a crash:
+        # the scan still runs and says "unknown" rather than claiming a version.
+        self.version = str(data.get("version") or UNKNOWN_VERSION)
 
         raw_attacks = data.get("attacks", [])
         self.attacks = []

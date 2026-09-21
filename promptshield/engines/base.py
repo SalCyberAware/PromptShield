@@ -12,12 +12,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from ..attacks.library import UNKNOWN_VERSION
 from ..models import (
     AnalyzerVerdict,
     Attack,
     Confidence,
     Finding,
     Scan,
+    ScanProvenance,
     ScanStatus,
     TargetConfig,
     Transcript,
@@ -81,7 +83,7 @@ class BaseScanner(ABC):
     async def run_scan(
         self,
         scan_id: str,
-        library_version: str = "1.0.0",
+        library_version: str = UNKNOWN_VERSION,
         on_progress: Callable[[int, int, Attack], None] | None = None,
         save_transcripts: bool = True,
         use_ai_analyzer: bool = False,
@@ -100,6 +102,9 @@ class BaseScanner(ABC):
 
         pattern_analyzer = PatternAnalyzer()
         analyzers_used: list[str] = ["pattern_analyzer"]
+        # analyzer name -> the model id it ran, for judges that actually produced
+        # a verdict. Populated from the winning analyzer in the cascade below.
+        judge_models: dict[str, str] = {}
         ai_cascade = (
             analyzers
             if analyzers is not None
@@ -153,6 +158,9 @@ class BaseScanner(ABC):
                                 analyzers_run_for_attack.append(ai_verdict.analyzer_name)
                                 if ai_verdict.analyzer_name not in analyzers_used:
                                     analyzers_used.append(ai_verdict.analyzer_name)
+                                self._record_judge_model(
+                                    judge_models, ai_cascade, ai_verdict.analyzer_name
+                                )
 
                         # Combine verdicts
                         success, confidence_score, confidence, needs_review = _combine_verdicts(verdicts)
@@ -220,6 +228,9 @@ class BaseScanner(ABC):
             scan.status = ScanStatus.FAILED
             scan.error = str(exc)
         finally:
+            # Recorded on every outcome, including a failed scan: a partial result
+            # still needs to say what produced it.
+            scan.provenance = self._build_provenance(library_version, judge_models)
             scan.completed_at = datetime.now(UTC)
             await self.cleanup()
 
@@ -266,6 +277,41 @@ class BaseScanner(ABC):
             self.errors.append(f"AI analyzer disabled (ollama_analyzer): {exc}")
 
         return analyzers
+
+    @staticmethod
+    def _record_judge_model(
+        judge_models: dict[str, str], cascade: list[Any], analyzer_name: str
+    ) -> None:
+        """Note the model id behind the analyzer whose verdict was just accepted.
+
+        Looked up from the live cascade instance rather than taken from config, so
+        an env override or an explicitly constructed analyzer is recorded as what
+        actually judged, not as what the defaults say should have.
+        """
+        if analyzer_name in judge_models:
+            return
+        for analyzer in cascade:
+            if getattr(analyzer, "name", None) != analyzer_name:
+                continue
+            model = getattr(analyzer, "model", None)
+            if isinstance(model, str) and model:
+                judge_models[analyzer_name] = model
+            return
+
+    def _build_provenance(
+        self, library_version: str, judge_models: dict[str, str]
+    ) -> ScanProvenance:
+        """Assemble the provenance record for this scan."""
+        from .. import __version__
+
+        target_model = getattr(self, "model", None)
+        return ScanProvenance(
+            promptshield_version=__version__,
+            attack_library_version=library_version,
+            target_model=target_model if isinstance(target_model, str) else None,
+            judge_models=dict(sorted(judge_models.items())),
+            recorded_at=datetime.now(UTC),
+        )
 
     async def _run_ai_with_cascade(
         self,

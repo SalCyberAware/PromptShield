@@ -25,7 +25,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from .. import __version__
+from .. import __version__, model_config
 from ..models import Attack, AuthType, TargetConfig
 from .base import BaseScanner
 
@@ -130,9 +130,9 @@ class APIScanner(BaseScanner):
     def _default_model(self) -> str:
         """Reasonable default model per provider for testing."""
         if self.provider == APIProvider.ANTHROPIC:
-            return "claude-haiku-4-5-20251001"
+            return model_config.ANTHROPIC_API_TARGET_MODEL
         if self.provider == APIProvider.OPENAI:
-            return "gpt-4o-mini"
+            return model_config.OPENAI_API_TARGET_MODEL
         return "default"
 
     async def _get_client(self) -> httpx.AsyncClient:

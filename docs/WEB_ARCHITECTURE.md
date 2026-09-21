@@ -296,3 +296,78 @@ yet implemented.
 2. **Phase 2 — Frontend.** React + Vite UI: textarea + example, SSE progress, results view.
 3. **Phase 3 — Deploy.** Vercel + Railway, server-side keys, CORS lockdown.
 4. **Phase 4 — Polish.** README demo link + screenshot, CHANGELOG, tag **v0.5.0**.
+
+---
+
+## Pinned models and scan provenance (issue #2)
+
+A security tool's verdicts must be reproducible, and must not change because a
+provider repointed an alias overnight. Two halves:
+
+### 1. Every model id is pinned, in one place
+
+`promptshield/model_config.py` is the single source of truth. No model-id literal
+exists anywhere else in the package — `tests/test_model_config.py` greps the
+package and fails if one reappears, so a new analyzer cannot quietly inline one.
+
+| Role | Pinned value | Env override |
+|------|--------------|--------------|
+| Target (web demo) | `gpt-4o-mini-2024-07-18` | `PROMPTSHIELD_TARGET_MODEL` |
+| Judge — Anthropic (CLI) | `claude-haiku-4-5-20251001` | `PROMPTSHIELD_ANALYZER_ANTHROPIC_MODEL` |
+| Judge — Anthropic (web) | `claude-sonnet-4-6` | `PROMPTSHIELD_ANALYZER_ANTHROPIC_MODEL` |
+| Judge — OpenAI | `gpt-4o-mini-2024-07-18` | `PROMPTSHIELD_ANALYZER_OPENAI_MODEL` |
+| Judge — Gemini | `gemini-2.0-flash-001` | `PROMPTSHIELD_ANALYZER_GEMINI_MODEL` |
+| Judge — Ollama | `llama3.2:3b` | `PROMPTSHIELD_ANALYZER_OLLAMA_MODEL` |
+| CLI api-scanner target — Anthropic | `claude-haiku-4-5-20251001` | *(per-scan `--model`)* |
+| CLI api-scanner target — OpenAI | `gpt-4o-mini-2024-07-18` | *(per-scan `--model`)* |
+
+What changed and what did not, because "pinned" means different things per provider:
+
+- **OpenAI was the real drift risk.** The bare `gpt-4o-mini` is an alias whose
+  "default snapshot" OpenAI repoints as newer snapshots ship. Both the target and
+  the OpenAI judge now take the dated form.
+- **Anthropic ids were already pinned.** `claude-sonnet-4-6` names one model
+  version and never silently becomes Sonnet 5; appending a date suffix would be an
+  invalid id. Left exactly as the provider publishes them.
+- **Gemini was already pinned.** Google's `-001` suffix *is* the pin; the bare
+  `gemini-2.0-flash` is the alias that moves.
+- **Ollama is deliberately not pinned.** Tags resolve against the operator's local
+  model store and the only stable identifier is a sha256 digest of a blob on that
+  machine, so shipping one would break `ollama pull llama3.2:3b` everywhere else.
+  It is an offline fallback the hosted demo never reaches, and provenance still
+  records whatever actually ran.
+
+An empty or whitespace-only override is treated as unset, so a blank variable in a
+deploy config cannot produce an empty model id.
+
+### 2. Every scan records what produced it
+
+`Scan.provenance` (`promptshield/models.py`) is populated by `run_scan` on every
+outcome, including a failed scan — a partial result still has to say what produced
+it. It carries:
+
+| Field | Meaning |
+|-------|---------|
+| `promptshield_version` | the build that ran the scan |
+| `attack_library_version` | parsed from `attacks_v1.yaml`, not hardcoded |
+| `target_model` | the exact id that answered the attacks |
+| `judge_models` | analyzer name → exact model id, **only** for judges that actually produced a verdict |
+| `recorded_at` | UTC timestamp |
+
+`judge_models` is read from the live analyzer instance rather than from config, so
+an env override or an explicitly constructed analyzer is recorded as what actually
+judged — not as what the defaults say should have. The pattern analyzer is absent
+by design: it is a deterministic matcher, not a model.
+
+Because provenance lives on the `Scan` model, **both** serialization paths carry it
+without duplicating the logic: the CLI's `JSONReporter` dumps it with the rest of
+the model, and `serialize_scan_result` projects it into the web payload under
+`provenance`. The frontend renders it as a quiet footer beneath the results, so a
+visitor can see exactly what judged their prompt.
+
+The attack library version was previously hardcoded to `"1.0.0"` in both
+`base.py` and `cli.py` while the library on disk was at 1.1.0 — every scan reported
+a version it had not run. `attacks_v1.yaml` now carries a parsed `version:` key
+(it was only ever a banner comment), `AttackLibrary.version` exposes it, and both
+callers pass it through. A library that declares no version records `"unknown"`
+rather than inventing one.

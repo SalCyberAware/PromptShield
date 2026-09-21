@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from promptshield import model_config
 from promptshield.analyzers.openai_analyzer import OpenAIAnalyzer
 from promptshield.models import Attack
 
@@ -49,10 +50,30 @@ class TestOpenAIAnalyzerInitialization:
         analyzer = OpenAIAnalyzer()
         assert analyzer.api_key == "sk-scoped-key"
 
-    def test_default_model_is_gpt_4o_mini(self) -> None:
-        """Cheapest GPT-4-class model is the default."""
+    def test_default_model_is_the_pinned_snapshot(self) -> None:
+        """The default is the dated snapshot, not the floating `gpt-4o-mini` alias.
+
+        OpenAI repoints the bare alias as newer snapshots ship, which would change
+        verdicts under a tool that promises reproducible results (issue #2).
+        """
         analyzer = OpenAIAnalyzer(api_key="sk-test")
-        assert analyzer.model == "gpt-4o-mini"
+        assert analyzer.model == "gpt-4o-mini-2024-07-18"
+        assert analyzer.model == model_config.OPENAI_JUDGE_MODEL
+
+    def test_default_model_is_not_a_floating_alias(self) -> None:
+        analyzer = OpenAIAnalyzer(api_key="sk-test")
+        assert analyzer.model != "gpt-4o-mini"
+
+    def test_env_overrides_the_pin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROMPTSHIELD_ANALYZER_OPENAI_MODEL", "gpt-4o-2024-11-20")
+        assert OpenAIAnalyzer(api_key="sk-test").model == "gpt-4o-2024-11-20"
+
+    def test_blank_env_override_falls_back_to_the_pin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blank var in a deploy config must not produce an empty model id."""
+        monkeypatch.setenv("PROMPTSHIELD_ANALYZER_OPENAI_MODEL", "   ")
+        assert OpenAIAnalyzer(api_key="sk-test").model == model_config.OPENAI_JUDGE_MODEL
 
     def test_custom_model_accepted(self) -> None:
         analyzer = OpenAIAnalyzer(api_key="sk-test", model="gpt-4o")

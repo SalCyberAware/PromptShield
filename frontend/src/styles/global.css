@@ -720,3 +720,56 @@ textarea {
     align-items: stretch;
   }
 }
+
+/* ── Provenance footer ──────────────────────────────────────────────────────
+   Deliberately quiet: this is a receipt, not a result. It sits below the scan
+   actions, reads as metadata, and never competes with the verdict above it. */
+.ps-provenance {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.ps-provenance__title {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ps-provenance__list {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ps-provenance__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.ps-provenance__row dt {
+  min-width: 8.5rem;
+  color: var(--color-text-faint);
+}
+
+.ps-provenance__row dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  color: var(--color-text-muted);
+}
+
+/* Model ids and versions are identifiers — monospace so they can be read,
+   compared and copied exactly, which is the whole point of recording them. */
+.ps-provenance__row code,
+.ps-provenance__row time {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}

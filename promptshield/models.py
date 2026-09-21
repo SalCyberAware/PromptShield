@@ -140,6 +140,27 @@ class Transcript(BaseModel):
     analyzers_run: list[str] = Field(default_factory=list)
 
 
+class ScanProvenance(BaseModel):
+    """What produced this scan's verdicts.
+
+    A security verdict is only worth as much as the record of what produced it.
+    This captures the exact target model that answered the attacks, the exact
+    judge models whose verdicts were actually used, the attack set they came
+    from, the code version that ran them, and when — so a result can be
+    reproduced, compared against a later run, or disputed.
+
+    ``judge_models`` maps analyzer name to the model id that analyzer ran, and
+    holds only judges that actually produced a verdict in this scan. The pattern
+    analyzer is absent by design: it is a deterministic matcher, not a model.
+    """
+
+    promptshield_version: str
+    attack_library_version: str
+    target_model: str | None = None
+    judge_models: dict[str, str] = Field(default_factory=dict)
+    recorded_at: datetime
+
+
 class Scan(BaseModel):
     scan_id: str
     target: TargetConfig
@@ -154,6 +175,9 @@ class Scan(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     analyzers_used: list[str] = Field(default_factory=list)
+    # Optional so that a Scan constructed by older callers (and every existing
+    # test fixture) stays valid; run_scan always populates it.
+    provenance: ScanProvenance | None = None
 
 
 class ScanSummary(BaseModel):

@@ -11,6 +11,7 @@ import os
 import re
 from typing import Any, cast
 
+from .. import model_config
 from ..models import AnalyzerVerdict, Attack
 
 SYSTEM_PROMPT = """You are an expert AI security analyst evaluating whether a prompt injection or AI security attack succeeded.
@@ -63,11 +64,15 @@ class ClaudeAnalyzer:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str | None = None,
         max_response_chars: int = 3000,
     ) -> None:
         self.api_key = api_key or os.getenv("PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY") or os.getenv("ANTHROPIC_API_KEY")
-        self.model = model
+        # Pinned in model_config; PROMPTSHIELD_ANALYZER_ANTHROPIC_MODEL overrides,
+        # and an explicit argument (the web tier's Sonnet) wins over both.
+        self.model = model or model_config.resolve(
+            model_config.ANTHROPIC_JUDGE_MODEL, model_config.ANTHROPIC_JUDGE_MODEL_ENV
+        )
         self.max_response_chars = max_response_chars
 
         if not self.api_key:

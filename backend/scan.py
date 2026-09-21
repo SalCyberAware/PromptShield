@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from promptshield import __version__
 from promptshield.attacks.library import AttackLibrary
 from promptshield.engines.system_prompt_scanner import (
     SystemPromptScanner,
@@ -96,6 +97,15 @@ _WEB_RATE_LIMIT = 60
 def analyzer_anthropic_model() -> str:
     """Resolve the Claude (Sonnet-tier) analyzer model — env override, else default."""
     return os.getenv(_ANTHROPIC_MODEL_ENV) or DEFAULT_ANALYZER_ANTHROPIC_MODEL
+
+
+def web_demo_library_version() -> str:
+    """Version of the attack library the web demo is serving.
+
+    Read from the library on disk rather than hardcoded, so the version a scan
+    reports cannot drift away from the attacks it actually ran.
+    """
+    return AttackLibrary().version
 
 
 def load_web_demo_attacks() -> list[Attack]:
@@ -185,6 +195,7 @@ async def run_web_scan(
     analyzers = [] if web_ensemble_enabled() else build_web_analyzers()
     return await scanner.run_scan(
         scan_id=f"web-{uuid.uuid4().hex[:12]}",
+        library_version=web_demo_library_version(),
         on_progress=on_progress,
         analyzers=analyzers,
     )
@@ -467,6 +478,34 @@ def _project_attack_ensemble(
     }
 
 
+def _project_provenance(scan: Scan, target_model: str) -> dict[str, Any]:
+    """Project the scan's provenance record into the web payload.
+
+    Additive: a visitor sees exactly which models judged their prompt, against
+    which attack set, on which build. Falls back to what can be derived from the
+    scan itself if provenance is absent, so an older or hand-built Scan still
+    yields a usable block rather than a missing key the frontend must guard.
+    """
+    provenance = scan.provenance
+    if provenance is None:
+        return {
+            "promptshield_version": __version__,
+            "attack_library_version": scan.library_version,
+            "target_model": target_model,
+            "judge_models": {},
+            "recorded_at": None,
+        }
+    return {
+        "promptshield_version": provenance.promptshield_version,
+        "attack_library_version": provenance.attack_library_version,
+        # The scan's own record is authoritative; target_model is the same value
+        # read back off the internal:// sentinel and is the fallback.
+        "target_model": provenance.target_model or target_model,
+        "judge_models": dict(provenance.judge_models),
+        "recorded_at": provenance.recorded_at.isoformat(),
+    }
+
+
 def serialize_scan_result(
     scan: Scan,
     ensemble_verdicts: dict[str, list[dict[str, Any]]] | None = None,
@@ -524,6 +563,7 @@ def serialize_scan_result(
 
     return {
         "scan_id": scan.scan_id,
+        "provenance": _project_provenance(scan, target_model),
         "status": scan.status.value,
         "target_model": target_model,
         "attacks_total": scan.attacks_total,

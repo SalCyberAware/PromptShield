@@ -237,7 +237,7 @@ def scan(
             scan_result = asyncio.run(
                 scanner.run_scan(
                     scan_id=scan_id,
-                    library_version="1.0.0",
+                    library_version=library.version,
                     on_progress=update_progress,
                     save_transcripts=not no_transcripts,
                     use_ai_analyzer=use_ai_analyzer,

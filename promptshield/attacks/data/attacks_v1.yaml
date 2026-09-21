@@ -4,6 +4,11 @@
 #
 # 50 attacks covering all 10 OWASP LLM Top 10 categories + custom research attacks
 
+# Parsed, not just the banner comment above: every scan records the library
+# version that produced its verdicts, so a result can be traced to an exact
+# attack set. Bump this with any change to the attacks below.
+version: "1.1.0"
+
 attacks:
 
   # ─── LLM01: Prompt Injection (10 attacks) ──────────────────────────────────

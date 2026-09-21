@@ -107,7 +107,7 @@ class TestModelResolution:
         scanner = SystemPromptScanner(
             system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT, api_key="sk-test"
         )
-        assert scanner.model == DEFAULT_TARGET_MODEL == "gpt-4o-mini"
+        assert scanner.model == DEFAULT_TARGET_MODEL == "gpt-4o-mini-2024-07-18"
 
     def test_env_override(
         self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack, monkeypatch: pytest.MonkeyPatch

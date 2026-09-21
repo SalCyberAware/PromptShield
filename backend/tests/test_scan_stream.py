@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import main
@@ -22,6 +23,7 @@ from scan import (
     load_web_demo_attacks,
     run_ensemble_judging,
     serialize_scan_result,
+    web_demo_library_version,
     web_ensemble_enabled,
 )
 
@@ -32,6 +34,7 @@ from promptshield.models import (
     Confidence,
     Finding,
     Scan,
+    ScanProvenance,
     ScanStatus,
     Severity,
     TargetConfig,
@@ -788,3 +791,112 @@ class TestScanStreamLimits:
         assert self._post(client, ip="1.1.1.1").status_code == 200
         assert self._post(client, ip="1.1.1.1").status_code == 429  # same IP, over limit
         assert self._post(client, ip="2.2.2.2").status_code == 200  # distinct IP, allowed
+
+
+# ── serialize_scan_result: provenance (issue #2) ────────────────────────────────
+
+
+class TestProvenanceProjection:
+    """The web payload must say exactly what produced the verdicts it carries."""
+
+    @staticmethod
+    def _provenance(**overrides: object) -> ScanProvenance:
+        base = {
+            "promptshield_version": "0.5.0",
+            "attack_library_version": "1.1.0",
+            "target_model": "gpt-4o-mini-2024-07-18",
+            "judge_models": {"claude_analyzer": "claude-sonnet-4-6"},
+            "recorded_at": datetime(2026, 9, 21, 12, 0, tzinfo=UTC),
+        }
+        base.update(overrides)
+        return ScanProvenance(**base)  # type: ignore[arg-type]
+
+    def test_every_recorded_field_reaches_the_payload(self) -> None:
+        scan = _fake_scan(load_web_demo_attacks()[:2])
+        scan.provenance = self._provenance()
+
+        provenance = serialize_scan_result(scan)["provenance"]
+
+        assert provenance["promptshield_version"] == "0.5.0"
+        assert provenance["attack_library_version"] == "1.1.0"
+        assert provenance["target_model"] == "gpt-4o-mini-2024-07-18"
+        assert provenance["judge_models"] == {"claude_analyzer": "claude-sonnet-4-6"}
+        assert provenance["recorded_at"].startswith("2026-09-21T12:00:00")
+
+    def test_target_model_is_the_pinned_snapshot_not_the_alias(self) -> None:
+        """The whole point of issue #2: no floating alias in a recorded result."""
+        scan = _fake_scan(load_web_demo_attacks()[:1])
+        scan.provenance = self._provenance()
+
+        assert serialize_scan_result(scan)["provenance"]["target_model"] != "gpt-4o-mini"
+
+    def test_every_judge_that_produced_verdicts_is_named(self) -> None:
+        scan = _fake_scan(load_web_demo_attacks()[:1])
+        scan.provenance = self._provenance(
+            judge_models={
+                "claude_analyzer": "claude-sonnet-4-6",
+                "gemini_analyzer": "gemini-2.0-flash-001",
+            }
+        )
+
+        assert serialize_scan_result(scan)["provenance"]["judge_models"] == {
+            "claude_analyzer": "claude-sonnet-4-6",
+            "gemini_analyzer": "gemini-2.0-flash-001",
+        }
+
+    def test_existing_result_shape_is_untouched(self) -> None:
+        """Provenance is additive: nothing the frontend already reads may move."""
+        scan = _fake_scan(load_web_demo_attacks()[:2])
+        scan.provenance = self._provenance()
+
+        result = serialize_scan_result(scan)
+
+        assert set(result) == {
+            "scan_id",
+            "status",
+            "target_model",
+            "attacks_total",
+            "attacks_run",
+            "analyzers_used",
+            "summary",
+            "results",
+            "provenance",
+        }
+        assert set(result["summary"]) == {
+            "target_model",
+            "analyzers_used",
+            "by_status",
+            "by_severity",
+            "by_owasp_category",
+            "failed",
+            "passed",
+        }
+
+    def test_scan_without_provenance_still_yields_a_usable_block(self) -> None:
+        """A hand-built or older Scan must not produce a missing key."""
+        scan = _fake_scan(load_web_demo_attacks()[:1])
+        scan.provenance = None
+
+        provenance = serialize_scan_result(scan)["provenance"]
+
+        assert provenance["attack_library_version"] == "1.1.0"
+        assert provenance["target_model"] == "gpt-4o-mini"  # off the internal:// sentinel
+        assert provenance["judge_models"] == {}
+        assert provenance["recorded_at"] is None
+
+    def test_recorded_target_model_wins_over_the_url_sentinel(self) -> None:
+        scan = _fake_scan(load_web_demo_attacks()[:1])
+        scan.provenance = self._provenance(target_model="gpt-4o-2024-11-20")
+
+        assert (
+            serialize_scan_result(scan)["provenance"]["target_model"]
+            == "gpt-4o-2024-11-20"
+        )
+
+
+class TestWebDemoLibraryVersion:
+    def test_reports_the_version_on_disk_not_a_hardcoded_one(self) -> None:
+        from promptshield.attacks.library import AttackLibrary
+
+        assert web_demo_library_version() == AttackLibrary().version
+        assert web_demo_library_version() == "1.1.0"

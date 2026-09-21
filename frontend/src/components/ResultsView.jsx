@@ -26,6 +26,80 @@ const ANALYZER_LABELS = {
   none: 'none',
 }
 
+// Provenance footer: exactly what judged this prompt. A visitor should never
+// have to take "an AI judged it" on trust -- the models, the attack set version
+// and the build are all named, and the timestamp makes a result comparable to a
+// later re-run. Renders nothing at all if the backend sent no provenance.
+function ProvenanceFooter({ provenance }) {
+  if (!provenance) return null
+
+  const {
+    target_model: targetModel,
+    judge_models: judgeModels,
+    attack_library_version: libraryVersion,
+    promptshield_version: version,
+    recorded_at: recordedAt,
+  } = provenance
+
+  const judges = Object.entries(judgeModels || {})
+  const recorded = recordedAt ? new Date(recordedAt) : null
+  // An unparseable timestamp must not take the whole footer down with it.
+  const recordedLabel =
+    recorded && !Number.isNaN(recorded.getTime()) ? recorded.toISOString() : null
+
+  return (
+    <section className="ps-provenance" aria-labelledby="ps-provenance-title">
+      <h3 className="ps-provenance__title" id="ps-provenance-title">
+        What judged this prompt
+      </h3>
+      <dl className="ps-provenance__list">
+        {targetModel && (
+          <div className="ps-provenance__row">
+            <dt>Target model</dt>
+            <dd>
+              <code>{targetModel}</code>
+            </dd>
+          </div>
+        )}
+        {judges.length > 0 && (
+          <div className="ps-provenance__row">
+            <dt>{judges.length === 1 ? 'Judge' : 'Judges'}</dt>
+            <dd>
+              {judges.map(([name, model]) => (
+                <code key={name}>{model}</code>
+              ))}
+            </dd>
+          </div>
+        )}
+        {libraryVersion && (
+          <div className="ps-provenance__row">
+            <dt>Attack set</dt>
+            <dd>
+              <code>v{libraryVersion}</code>
+            </dd>
+          </div>
+        )}
+        {version && (
+          <div className="ps-provenance__row">
+            <dt>PromptShield</dt>
+            <dd>
+              <code>v{version}</code>
+            </dd>
+          </div>
+        )}
+        {recordedLabel && (
+          <div className="ps-provenance__row">
+            <dt>Scanned at</dt>
+            <dd>
+              <time dateTime={recordedLabel}>{recordedLabel}</time>
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  )
+}
+
 // The six OWASP LLM categories the demo can test against a bare system prompt.
 const TESTED_CATEGORIES = [
   ['LLM01', 'Prompt injection'],
@@ -115,6 +189,8 @@ export default function ResultsView({ result, onReset }) {
           Scan another prompt
         </button>
       </div>
+
+      <ProvenanceFooter provenance={result.provenance} />
     </div>
   )
 }

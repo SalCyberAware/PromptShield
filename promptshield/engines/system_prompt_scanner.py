@@ -25,10 +25,13 @@ import os
 
 from openai import APITimeoutError, AsyncOpenAI
 
+from .. import model_config
 from ..models import Attack, TargetConfig
 from .base import BaseScanner
 
-DEFAULT_TARGET_MODEL = "gpt-4o-mini"
+# Re-exported for callers that referenced this name before the pins moved
+# into model_config; the value now lives in exactly one place.
+DEFAULT_TARGET_MODEL = model_config.TARGET_MODEL
 
 # Cap the target reply we hand to the analyzers (matches APIScanner's max_tokens
 # request budget). The transcript layer truncates separately.
@@ -37,7 +40,9 @@ _TARGET_MAX_TOKENS = 1024
 
 def default_target_model() -> str:
     """Resolve the server-side target model (env override, else the cheap default)."""
-    return os.getenv("PROMPTSHIELD_TARGET_MODEL") or DEFAULT_TARGET_MODEL
+    return model_config.resolve(
+        model_config.TARGET_MODEL, model_config.TARGET_MODEL_ENV
+    )
 
 
 def internal_target_url(model: str) -> str:
@@ -51,7 +56,7 @@ class SystemPromptScanner(BaseScanner):
     Constructor key precedence mirrors ``OpenAIAnalyzer``:
     ``PROMPTSHIELD_TARGET_OPENAI_KEY`` → ``OPENAI_API_KEY`` (explicit ``api_key``
     arg wins over both). Model precedence: explicit ``model`` arg →
-    ``PROMPTSHIELD_TARGET_MODEL`` → ``"gpt-4o-mini"``.
+    ``PROMPTSHIELD_TARGET_MODEL`` → the pin in ``model_config``.
     """
 
     def __init__(
