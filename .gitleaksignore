@@ -1,0 +1,23 @@
+# gitleaks false positives, pinned to an exact finding.
+#
+# Each entry is commit:file:rule:line, so it suppresses precisely one finding in
+# one historical commit. It cannot hide a future leak — not in another file, not
+# under another rule, not even the same rule in this file at a different line or
+# in a later commit.
+#
+# ── 9365de9, promptshield/model_config.py:83 ──────────────────────────────────
+# generic-api-key fired on
+#
+#     ANTHROPIC_API_TARGET_MODEL = "claude-haiku-4-5-20251001"
+#
+# That is a pinned model id, not a credential. The rule keys off an identifier
+# containing "API" next to a high-entropy string; the same value assigned to
+# ANTHROPIC_JUDGE_MODEL two lines earlier was not flagged, which is what
+# identifies the name as the trigger rather than the value.
+#
+# 502746f already renamed the constant to ANTHROPIC_SCAN_TARGET_MODEL, so the
+# working tree is clean and no new commit can reproduce this. The entry exists
+# only because the Security job scans the full history, where 9365de9 still
+# carries the old name. Clearing it properly would mean rewriting published
+# history on main, which is not worth it for a false positive.
+9365de9c0d87244836362edcfb5c786275a3f3fb:promptshield/model_config.py:generic-api-key:83
