@@ -130,9 +130,9 @@ class APIScanner(BaseScanner):
     def _default_model(self) -> str:
         """Reasonable default model per provider for testing."""
         if self.provider == APIProvider.ANTHROPIC:
-            return model_config.ANTHROPIC_API_TARGET_MODEL
+            return model_config.ANTHROPIC_SCAN_TARGET_MODEL
         if self.provider == APIProvider.OPENAI:
-            return model_config.OPENAI_API_TARGET_MODEL
+            return model_config.OPENAI_SCAN_TARGET_MODEL
         return "default"
 
     async def _get_client(self) -> httpx.AsyncClient:

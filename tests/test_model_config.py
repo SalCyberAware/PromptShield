@@ -54,8 +54,8 @@ class TestPinsAreExactVersions:
             "judge_openai",
             "judge_gemini",
             "judge_ollama",
-            "api_target_anthropic",
-            "api_target_openai",
+            "scan_target_anthropic",
+            "scan_target_openai",
         }
         assert all(v for v in model_config.PINNED_MODELS.values())
 
