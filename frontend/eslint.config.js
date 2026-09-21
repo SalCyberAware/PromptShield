@@ -23,7 +23,11 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // No varsIgnorePattern: ESLint 10 treats a JSX element as an ordinary
+      // reference to the variable in scope, so a component used only in JSX is
+      // seen as used without help. The '^[A-Z_]' exemption that used to be
+      // needed for that now only hides genuinely unused capitalised bindings.
+      'no-unused-vars': ['error'],
     },
   },
   {
