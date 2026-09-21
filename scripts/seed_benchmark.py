@@ -31,6 +31,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# Provider keys live in backend/.env -- the file the local backend runs on --
+# with the repo-root .env kept for CLI-only settings. Load the backend one first
+# so seeding works from a checkout without exporting anything by hand, and fall
+# back to the root file for anything it does not define. override=False so a
+# variable already set in the environment still wins.
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(REPO_ROOT / "backend" / ".env", override=False)
+load_dotenv(REPO_ROOT / ".env", override=False)
+
 from backend.scan import (  # noqa: E402
     build_web_analyzers,
     load_web_demo_attacks,
@@ -176,6 +186,18 @@ async def seed(output: Path, judge_limit: int | None) -> int:
     return 0
 
 
+def report_credentials() -> None:
+    """Say which provider credentials resolved. Names only, never values."""
+    import os
+
+    for label, names in (
+        ("target (OpenAI)", ("PROMPTSHIELD_TARGET_OPENAI_KEY", "OPENAI_API_KEY")),
+        ("judge (Anthropic)", ("PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY", "ANTHROPIC_API_KEY")),
+    ):
+        found = next((n for n in names if os.getenv(n)), None)
+        print(f"  {label}: {'resolved via ' + found if found else 'NOT FOUND'}")
+
+
 def estimate() -> None:
     """Print the cost estimate without calling anything."""
     attacks = load_web_demo_attacks()
@@ -184,6 +206,9 @@ def estimate() -> None:
     print(f"target calls: {calls}  ({default_target_model()})")
     print(f"judge calls:  {calls}  ({model_config.WEB_ANTHROPIC_JUDGE_MODEL})")
     print(f"attack library: v{web_demo_library_version()}")
+    print("")
+    print("credentials:")
+    report_credentials()
     print("\nNo API calls were made.")
 
 
