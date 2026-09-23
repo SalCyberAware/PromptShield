@@ -209,9 +209,22 @@ class TestPrompts:
         assert resolve_prompt("something-else") is None
         assert resolve_prompt(None) is None
 
-    def test_the_seed_script_and_the_reviewer_use_one_definition(self) -> None:
-        """Two copies of the prompt would mean the reviewer could be shown text
-        that is not what the target actually received."""
-        import scripts.seed_benchmark as seed
+    def test_the_seed_script_holds_no_second_copy_of_the_prompts(self) -> None:
+        """Two copies would mean the reviewer could be shown text the target
+        never received.
 
-        assert seed.PROMPTS is EXAMPLE_PROMPTS
+        Checked by reading the script rather than importing it: ``scripts`` is
+        not a declared package, so it is not importable from an installed
+        checkout, and a test that silently skipped there would protect nothing.
+        """
+        source = (
+            Path(__file__).resolve().parent.parent / "scripts" / "seed_benchmark.py"
+        ).read_text(encoding="utf-8")
+
+        assert "EXAMPLE_PROMPTS" in source, "the seeder should import the shared prompts"
+        for literal in ("SupportBot for QuickCart", "Aria, the customer support assistant"):
+            assert literal not in source, (
+                f"{literal!r} is defined in both the seeder and prompts.py"
+            )
+        for literal in ("SupportBot for QuickCart", "Aria, the customer support assistant"):
+            assert any(literal in text for text in EXAMPLE_PROMPTS.values())
