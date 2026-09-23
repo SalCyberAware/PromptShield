@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Seed the verdict benchmark from real target responses.
 
-Runs the 13 web-demo attacks against each example system prompt, captures the
-**actual** text the target model produced, asks a judge for a candidate verdict,
-and writes every case out as UNREVIEWED.
+Runs an attack set against each example system prompt, captures the **actual**
+text the target model produced, asks a judge for a candidate verdict, and writes
+every case out as UNREVIEWED. ``--attacks`` picks the set: the 13 the web demo
+serves, or the whole library.
 
 This is the only part of the harness that spends money, and it is deliberately a
 one-off script rather than a CLI subcommand: seeding is something you do once
@@ -16,9 +17,9 @@ Nothing it writes is ground truth. Every case lands as UNREVIEWED with
 ``proposed_by: machine``, and the runner refuses to score against those unless
 explicitly told to. A person reads each case and confirms or corrects the label.
 
-Cost: 13 attacks x 2 prompts = 26 target calls plus 26 judge calls. On the
-pinned models that is a few cents; --dry-run prints the estimate and exits
-without calling anything.
+Cost scales with the attack set: attacks x 2 prompts target calls, and the same
+number of judge calls. The judge is the half that bills; a local target is free.
+--dry-run prints the count and exits without calling anything.
 
 The target is overridable, which is how the benchmark gets cases the judge can
 actually be wrong about. A frontier target refuses almost everything, so seeding
@@ -35,6 +36,8 @@ responses that do fall over, at no cost:
 ``--append`` keeps every case already in the file and adds the new ones after
 it, and each case records its target model in ``source``, so cases captured from
 different targets stay distinguishable rather than blurring into one population.
+``--skip-existing`` drops any (attack, prompt, target model) the file already
+holds, so widening the attack set does not pay to re-capture what is there.
 """
 from __future__ import annotations
 
@@ -63,6 +66,7 @@ from backend.scan import (  # noqa: E402
     web_demo_library_version,
 )
 from promptshield import model_config  # noqa: E402
+from promptshield.attacks.library import AttackLibrary  # noqa: E402
 from promptshield.engines.system_prompt_scanner import (  # noqa: E402
     SystemPromptScanner,
     default_target_model,
@@ -74,7 +78,7 @@ from promptshield.evaluation.benchmark import (  # noqa: E402
     dump_benchmark,
     load_benchmark,
 )
-from promptshield.models import TargetConfig, TargetType  # noqa: E402
+from promptshield.models import Attack, TargetConfig, TargetType  # noqa: E402
 
 # The two prompts the demo ships, kept in sync with frontend/src/lib/examplePrompt.js.
 # One deliberately weak, one deliberately hardened, so the seed spans both the
@@ -105,6 +109,21 @@ PROMPTS = {"leaky": LEAKY_PROMPT, "hardened": HARDENED_PROMPT}
 
 #: An Ollama daemon's OpenAI-compatible endpoint, for --target-base-url.
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
+
+#: The attack sets --attacks can name.
+ATTACK_SETS = ("web", "all")
+
+
+def resolve_attacks(attack_set: str) -> list[Attack]:
+    """Return the attacks to fire, for the named set.
+
+    ``web`` is the 13 the hosted demo serves — the set whose verdicts the
+    product's own users see. ``all`` is the whole library, which covers the
+    OWASP categories the demo set leaves out entirely.
+    """
+    if attack_set == "web":
+        return load_web_demo_attacks()
+    return AttackLibrary().all()
 
 
 def _candidate_verdict(vulnerable: bool, confidence: float) -> str:
@@ -146,6 +165,19 @@ def _existing_cases(output: Path, append: bool, overwrite: bool) -> tuple[str, l
     )
 
 
+def _captured(cases: list[BenchmarkCase]) -> set[tuple[str, str, str]]:
+    """The (attack, prompt, target model) triples the file already holds.
+
+    Re-running the same triple is not wrong — a target samples a different answer
+    each time, so a second capture is a genuine second case — but it is not what
+    widening the attack set is for, and it bills a judge call to find out.
+    """
+    return {
+        (case.attack_id, str(case.source.get("prompt", "")), str(case.source.get("target_model", "")))
+        for case in cases
+    }
+
+
 def _next_case_number(cases: list[BenchmarkCase]) -> int:
     """First free BM-NNNN number, so appended ids never collide with kept ones."""
     highest = 0
@@ -163,18 +195,22 @@ async def seed(
     target_base_url: str | None,
     append: bool,
     overwrite: bool,
+    attack_set: str,
+    skip_existing: bool,
 ) -> int:
     version, cases = _existing_cases(output, append, overwrite)
     kept = len(cases)
     next_number = _next_case_number(cases)
+    already = _captured(cases) if skip_existing else set()
 
-    attacks = load_web_demo_attacks()
+    attacks = resolve_attacks(attack_set)
     judges = build_web_analyzers()
     if not judges:
         print("No judge could be constructed — check the analyzer API keys.", file=sys.stderr)
         return 1
     judge = judges[0]
 
+    print(f"attacks: {len(attacks)} ({attack_set} set) x {len(PROMPTS)} prompts")
     print(f"target: {target_model} via {target_base_url or 'api.openai.com'}")
     print(f"judge:  {getattr(judge, 'name', 'unknown')} ({getattr(judge, 'model', 'unknown')})")
     if kept:
@@ -182,6 +218,7 @@ async def seed(
     print("")
 
     attempted = 0
+    skipped_existing = 0
 
     for prompt_name, system_prompt in PROMPTS.items():
         scanner = SystemPromptScanner(
@@ -199,6 +236,9 @@ async def seed(
             for attack in attacks:
                 if judge_limit is not None and attempted >= judge_limit:
                     break
+                if (attack.id, prompt_name, target_model) in already:
+                    skipped_existing += 1
+                    continue
                 attempted += 1
                 response = await scanner.send_attack(attack)
                 if not response:
@@ -261,6 +301,8 @@ async def seed(
     path = dump_benchmark(benchmark, output)
     added = len(cases) - kept
     print()
+    if skipped_existing:
+        print(f"Skipped {skipped_existing} (attack, prompt, target) already in the file.")
     print(f"Wrote {added} new UNREVIEWED case(s) ({len(cases)} total) -> {path}")
     print("Every new label is a candidate. Review each before scoring against it.")
     return 0
@@ -283,12 +325,28 @@ def report_credentials(target_base_url: str | None) -> None:
         print(f"  {label}: {'resolved via ' + found if found else 'NOT FOUND'}")
 
 
-def estimate(target_model: str, target_base_url: str | None) -> None:
+def estimate(
+    target_model: str,
+    target_base_url: str | None,
+    attack_set: str,
+    output: Path,
+    skip_existing: bool,
+) -> None:
     """Print the cost estimate without calling anything."""
-    attacks = load_web_demo_attacks()
+    attacks = resolve_attacks(attack_set)
     calls = len(attacks) * len(PROMPTS)
+    if skip_existing and output.exists():
+        already = _captured(list(load_benchmark(output).cases))
+        planned = [
+            (a.id, prompt)
+            for prompt in PROMPTS
+            for a in attacks
+            if (a.id, prompt, target_model) not in already
+        ]
+        print(f"skipping {calls - len(planned)} already captured for {target_model}")
+        calls = len(planned)
     where = target_base_url or "api.openai.com"
-    print(f"attacks: {len(attacks)}  prompts: {len(PROMPTS)}")
+    print(f"attacks: {len(attacks)} ({attack_set} set)  prompts: {len(PROMPTS)}")
     print(f"target calls: {calls}  ({target_model} via {where})")
     print(f"judge calls:  {calls}  ({model_config.WEB_ANTHROPIC_JUDGE_MODEL})")
     print(f"attack library: v{web_demo_library_version()}")
@@ -311,6 +369,16 @@ def main() -> int:
     parser.add_argument(
         "--limit", type=int, default=None,
         help="Stop after N cases (for a cheap smoke run).",
+    )
+    parser.add_argument(
+        "--attacks", choices=ATTACK_SETS, default="web",
+        help="Which attacks to fire: 'web' is the 13 the hosted demo serves, "
+             "'all' is the whole library. Judge cost scales with the count.",
+    )
+    parser.add_argument(
+        "--skip-existing", action="store_true",
+        help="Skip any (attack, prompt, target model) the output file already "
+             "holds, so widening the attack set does not re-capture what is there.",
     )
     parser.add_argument(
         "--target-model", default=None,
@@ -341,7 +409,10 @@ def main() -> int:
     target_model = args.target_model or default_target_model()
 
     if args.dry_run:
-        estimate(target_model, args.target_base_url)
+        estimate(
+            target_model, args.target_base_url, args.attacks, args.output,
+            args.skip_existing,
+        )
         return 0
     return asyncio.run(
         seed(
@@ -351,6 +422,8 @@ def main() -> int:
             args.target_base_url,
             args.append,
             args.overwrite,
+            args.attacks,
+            args.skip_existing,
         )
     )
 

@@ -115,17 +115,26 @@ python scripts/seed_benchmark.py --dry-run     # call count, spends nothing
 OPENAI_API_KEY=... ANTHROPIC_API_KEY=... python scripts/seed_benchmark.py
 ```
 
-Runs the 13 web-demo attacks against both example system prompts — one
-deliberately weak, one deliberately hardened, so the seed spans the `held` side
-as well as the dramatic half — captures the real responses, asks a judge for a
-candidate verdict, and writes everything as `UNREVIEWED`.
+Runs an attack set against both example system prompts — one deliberately weak,
+one deliberately hardened, so the seed spans the `held` side as well as the
+dramatic half — captures the real responses, asks a judge for a candidate
+verdict, and writes everything as `UNREVIEWED`.
 
-Cost is 26 target calls plus 26 judge calls; on the pinned models that is
-roughly **$0.19**. Seeding is a deliberate one-off per benchmark version, which
-is why it is a script rather than a CLI subcommand — nobody should be able to
-trigger real spend by accident. An existing benchmark is never replaced
-silently: a captured response cannot be re-created, so the script stops unless
-told `--append` or `--overwrite`.
+`--attacks` picks the set. `web` (the default) is the 13 the hosted demo serves,
+which is the set whose verdicts real users see. `all` is the whole 50-attack
+library, which reaches the OWASP categories the demo set does not touch at all.
+
+Cost is `attacks x 2` target calls plus the same number of judge calls. Only the
+judge bills when the target is local: 26 cases is roughly **$0.10** of judge,
+100 is roughly **$0.40**. Seeding is deliberate, which is why it is a script
+rather than a CLI subcommand — nobody should be able to trigger real spend by
+accident, and `--dry-run` prints the count first.
+
+An existing benchmark is never replaced silently: a captured response cannot be
+re-created, so the script stops unless told `--append` or `--overwrite`. Because
+the demo set is a subset of the library, widening the set would otherwise pay to
+re-capture what is already there; `--skip-existing` drops any (attack, prompt,
+target model) the file already holds.
 
 ### Why the target is overridable
 
@@ -141,9 +150,14 @@ including a local Ollama daemon, which costs nothing per target call:
 
 ```bash
 ollama pull llama3.2:3b
-python scripts/seed_benchmark.py --append \
+python scripts/seed_benchmark.py --append --attacks all \
     --target-model llama3.2:3b --target-base-url http://localhost:11434/v1
 ```
+
+`--target-base-url` is a plain URL, not an "is it Ollama" switch, which matters
+more than it sounds: when the daemon on the default port stopped seeing its own
+model store mid-session, pointing the run at a second daemon on another port was
+a flag change rather than a debugging session.
 
 No API key is sent to a `--target-base-url` host, even when `OPENAI_API_KEY` is
 set in the shell — a credential issued for one host does not travel to another
