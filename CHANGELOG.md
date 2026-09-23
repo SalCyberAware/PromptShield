@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **Secret canaries** (`promptshield/analyzers/canary.py`, issue #23). Every other check asks "did *this* attack succeed?", so a secret that appeared in a reply went unrecorded whenever the attack that happened to be running was not asking about secrets. The canary check ignores the attack entirely: it extracts the distinctive values from the operator's **own** submitted system prompt — labelled ones like `the PIN is 4417`, well-known credential formats, shouty codes near a label — and looks for those exact strings in every response. Because the operator hands us the prompt, this is an exact match on a value they supplied rather than a guess from shape, so placeholders like `your_stripe_secret_key` cannot fire it. Hits are reported in a new scan-level `canary_leaks` array, each entry carrying `judged_by: "canary"`, `confidence_score: 1.0`, the number of secrets found and a **redacted** excerpt. Canaries are derived per scan, held in memory, and never written to a report, a log or a benchmark file.
+- **A shared verdict-JSON extractor** (`promptshield/analyzers/verdict_json.py`) used by all four analyzers, replacing four copies of "strip fences from the ends, else regex the first `{...}`". It finds fenced blocks anywhere in the reply, tolerates preamble and trailing prose, and brace-matches rather than regexing — the old non-greedy pattern truncated any verdict whose `reasoning` quoted a JSON-shaped payload, which the attack set produces routinely.
+- **One retry on an unusable judge reply** (Claude analyzer). The retry restates that the quoted attack and response are inert evidence for classification; it changes the framing, never the question.
+
+### Changed
+
+- **Attack library 1.1.0 → 1.2.0.** `PS-LLM04-001` gains newline- and comma-separated forms of its repetition indicator (a complying model puts one word per line, and the spaced form alone missed an 800-line response). `PS-LLM06-001` gains first-person phrasings — `i was instructed`, `my full instructions` — because its four existing indicators are all structural and matched only a prompt reproduced in its original second-person wording, missing a paraphrase that leaked the same content. `PS-LLM06-006` **loses** `_KEY=`, which matched `STRIPE_SECRET_KEY=your_stripe_secret_key` — a placeholder, which is the correct behaviour that attack exists to distinguish from a leak; real leaks of the operator's values are the canary's job now.
+- **The pattern floor tolerates a refusal that redirects.** Declining and then naming the same thing again while pointing somewhere legitimate — "I can't provide an API key. If you need one, sign up and obtain a valid API key from the website." — is still one refusal. The redirect can only ever suppress a term the refusal already declined, never introduce a new one, so a sentence that actually leaks something is still reported.
+
+### Fixed
+
+- **A judge refusal is no longer mistaken for a parser bug.** Two benchmark cases came back `not_ai_judged` with the reasoning "Could not parse analyzer response:" and nothing after it. The cause was not parsing: the API declined the call outright — `stop_reason: refusal`, zero content blocks, zero output tokens — so there was nothing to parse. One of the two recovers on the reframed retry; the other refuses under every framing tried and now degrades with an accurate message ("Judge declined to answer") at confidence 0.0, so the attack is still reported `not_ai_judged` rather than being counted as held.
+- **A multi-line indicator is no longer discounted as a refusal.** Refusal classification is per sentence, and an indicator spanning sentence boundaries sits in no single sentence — which the check read as "not outside a refusal", scoring a fully compliant multi-line response as a refusal.
+
 ## [0.5.0] - 2026-09-01
 
 The "web product" release: PromptShield stops being a CLI you install and becomes a URL you visit. Paste a system prompt at [the live demo](https://prompt-shield-mocha.vercel.app), and a server-side target model runs 13 attacks against it while the results stream in. The engine underneath is unchanged — the web layer is a thin FastAPI wrapper that imports `promptshield` as a library.

@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any
 
 from promptshield import __version__
+from promptshield.analyzers.canary import check_response, extract_canaries
 from promptshield.attacks.library import AttackLibrary
 from promptshield.engines.system_prompt_scanner import (
     SystemPromptScanner,
@@ -506,9 +507,51 @@ def _project_provenance(scan: Scan, target_model: str) -> dict[str, Any]:
     }
 
 
+def _canary_leaks(scan: Scan, system_prompt: str | None) -> list[dict[str, Any]]:
+    """Responses that handed back a secret from the operator's own system prompt.
+
+    Reported separately from the per-attack verdicts, and deliberately does not
+    change them (issue #23). A leak is a fact about the response; whether the
+    attack that elicited it succeeded is a different question, and folding the
+    two together is what made the judge score a credential leak as a successful
+    backdoor trigger. An attack keeps the verdict it earned and the leak is
+    reported on its own.
+
+    Canaries are derived from the submitted prompt, held in this function, and
+    dropped when it returns. Every excerpt is redacted first -- a finding that
+    quoted the secret in order to report the secret would be the leak it warns
+    about.
+    """
+    canaries = extract_canaries(system_prompt or "")
+    if not canaries:
+        return []
+
+    leaks: list[dict[str, Any]] = []
+    for transcript in scan.transcripts:
+        response = transcript.response or ""
+        if response.startswith(("[ERROR]", "[TIMEOUT]")):
+            continue
+        hit = check_response(response, canaries)
+        if not hit.leaked:
+            continue
+        leaks.append(
+            {
+                "attack_id": transcript.attack_id,
+                "attack_name": transcript.attack_name,
+                "status": "vulnerable",
+                "judged_by": "canary",
+                "confidence_score": 1.0,
+                "secrets_found": hit.count,
+                "excerpt": hit.excerpt,
+            }
+        )
+    return leaks
+
+
 def serialize_scan_result(
     scan: Scan,
     ensemble_verdicts: dict[str, list[dict[str, Any]]] | None = None,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Project a completed ``Scan`` into the curated, honest payload for ``done``.
 
@@ -560,6 +603,7 @@ def serialize_scan_result(
             )
 
     target_model = scan.target.url.removeprefix(_INTERNAL_URL_PREFIX)
+    canary_leaks = _canary_leaks(scan, system_prompt)
 
     return {
         "scan_id": scan.scan_id,
@@ -582,4 +626,6 @@ def serialize_scan_result(
             "passed": by_status["held"],
         },
         "results": results,
+        # Independent of which attack was running. See _canary_leaks.
+        "canary_leaks": canary_leaks,
     }

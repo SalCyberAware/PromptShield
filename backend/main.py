@@ -161,9 +161,11 @@ async def _scan_event_stream(system_prompt: str) -> AsyncIterator[str]:
             scan = await run_web_scan(system_prompt, on_progress)
             if web_ensemble_enabled():
                 ensemble = await run_ensemble_judging(scan)
-                result = serialize_scan_result(scan, ensemble_verdicts=ensemble)
+                result = serialize_scan_result(
+                    scan, ensemble_verdicts=ensemble, system_prompt=system_prompt
+                )
             else:
-                result = serialize_scan_result(scan)
+                result = serialize_scan_result(scan, system_prompt=system_prompt)
             queue.put_nowait({"type": "done", "result": result})
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as an error event
             queue.put_nowait({"type": "error", "message": str(exc)})

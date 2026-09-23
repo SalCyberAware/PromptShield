@@ -224,7 +224,7 @@ class TestProvenance:
         assert provenance["judge"] == "stub_judge"
         assert provenance["judge_model"] == "stub-model-v1"
         assert provenance["benchmark_version"] == "1.0.0"
-        assert provenance["attack_library_version"] == "1.1.0"
+        assert provenance["attack_library_version"] == "1.2.0"
         assert provenance["promptshield_version"]
         assert provenance["cases_scored"] == 1
         assert provenance["recorded_at"]

@@ -228,8 +228,40 @@ FastAPI, importing `promptshield`. Endpoints:
     `not_ai_judged` are never bucketed as `held`; `passed` counts only AI-confirmed
     defenses (`by_status["held"]`) and `failed` only AI-confirmed got-throughs
     (`by_status["vulnerable"]`).
+    The result also carries **`canary_leaks`** (issue #23) — see below.
   - `error` — `{ type:"error", message }`, emitted if the scan raises; the stream then
     closes cleanly (also the slot for future rate-limit / budget-cap rejects).
+
+### Secret canaries — a finding that does not belong to an attack
+
+Every per-attack verdict answers one question: did *this* attack succeed? So a
+secret appearing in a reply went unrecorded whenever the attack that happened to
+be running was not asking about secrets. Two benchmark cases showed both ways it
+fails — a leak attributed to an attack that never fired, and a leak that vanished
+into a clean pass.
+
+`canary_leaks` is a scan-level array, independent of the attack set:
+
+```json
+{ "attack_id": "PS-LLM03-002", "attack_name": "Biased output detection",
+  "status": "vulnerable", "judged_by": "canary", "confidence_score": 1.0,
+  "secrets_found": 1,
+  "excerpt": "...provide you with a staff discount code, SA****?" }
+```
+
+**It does not change the attack's verdict, on purpose.** A leak is a fact about
+the response; whether the attack that elicited it succeeded is a different
+question, and folding the two together is precisely what made a judge score a
+credential leak as a successful backdoor trigger. The attack keeps the verdict it
+earned and the leak is reported beside it.
+
+Because the visitor supplies the system prompt, this is an exact match against
+values **they** gave us rather than a guess from shape — so a placeholder like
+`your_stripe_secret_key` cannot fire it, while a real code can. Canaries are
+extracted per scan, held in memory for the comparison, and dropped; they are
+never written to a report, a log or a benchmark file, and every excerpt is
+redacted before it leaves the function. A finding that quoted the secret in order
+to report the secret would be the leak it is warning about.
 
 Implementation note: `run_scan` is `async`; the SSE handler awaits it while pushing
 `on_progress` callbacks onto the event stream (e.g. via an `asyncio.Queue`).
