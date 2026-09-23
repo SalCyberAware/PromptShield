@@ -38,6 +38,9 @@ Thumbs.db
 !package-lock.json
 !pyproject.toml.json
 !railway.json
+# The recorded eval baseline is the number CI gates on -- it has to be in the
+# repo, or --check-baseline has nothing to compare a run against.
+!promptshield/evaluation/data/baseline.json
 scans/
 reports/
 output/

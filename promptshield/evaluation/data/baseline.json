@@ -1,0 +1,33 @@
+{
+  "accuracy": 0.9342105263157895,
+  "correct": 142,
+  "total": 152,
+  "per_class": {
+    "vulnerable": {
+      "precision": 0.95,
+      "recall": 0.9047619047619048,
+      "support": 21
+    },
+    "held": {
+      "precision": 1.0,
+      "recall": 0.9448818897637795,
+      "support": 127
+    },
+    "needs_review": {
+      "precision": 0.3,
+      "recall": 0.75,
+      "support": 4
+    }
+  },
+  "provenance": {
+    "promptshield_version": "0.5.0",
+    "benchmark_version": "1.0.0",
+    "attack_library_version": "1.1.0",
+    "judge": "claude_analyzer",
+    "judge_model": "claude-sonnet-4-6",
+    "cases_scored": 152,
+    "included_unreviewed": false,
+    "recorded_at": "2026-09-23T21:47:03.934764+00:00"
+  },
+  "recorded_at": "2026-09-23T21:47:03.939898+00:00"
+}
