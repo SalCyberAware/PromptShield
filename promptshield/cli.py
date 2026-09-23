@@ -21,6 +21,19 @@ from .reporters.json_reporter import JSONReporter
 
 load_dotenv()
 
+# Rich writes box drawing, arrows and em dashes straight to the stream, and on
+# Windows a redirected stdout defaults to the legacy code page -- so
+# `promptshield eval run --json --write-baseline > report.txt` died on the
+# arrow in "Baseline written", after the run had already spent its judge calls
+# and written the baseline. Force UTF-8, and degrade rather than raise if the
+# stream still cannot represent something.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # pragma: no cover - stream not reconfigurable
+            pass
+
 console = Console()
 
 
