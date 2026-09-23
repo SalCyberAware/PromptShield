@@ -85,7 +85,7 @@ WEB_DEMO_ATTACK_IDS: tuple[str, ...] = (
 
 # ── Decision 2: analyzer tiers (env-configurable, conservative defaults) ────────
 # ClaudeAnalyzer has no env-based model override of its own, so the Sonnet tier is
-# resolved here. GeminiAnalyzer already defaults to Flash (gemini-2.0-flash-001).
+# resolved here. GeminiAnalyzer already defaults to Flash (gemini-3.6-flash).
 _ANTHROPIC_MODEL_ENV = "PROMPTSHIELD_ANALYZER_ANTHROPIC_MODEL"
 DEFAULT_ANALYZER_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 

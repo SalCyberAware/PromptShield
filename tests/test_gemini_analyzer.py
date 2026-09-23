@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from promptshield import model_config
 from promptshield.analyzers.gemini_analyzer import GeminiAnalyzer
 from promptshield.models import Attack
 
@@ -56,10 +57,10 @@ class TestGeminiAnalyzerInitialization:
         analyzer = GeminiAnalyzer()
         assert analyzer.api_key == "g-scoped-key"
 
-    def test_default_model_is_gemini_2_flash(self) -> None:
-        """Default Flash model is stable and cheap."""
+    def test_default_model_is_the_pinned_flash(self) -> None:
+        """Default Flash model is stable and cheap, and still served."""
         analyzer = GeminiAnalyzer(api_key="g-test")
-        assert analyzer.model == "gemini-2.0-flash-001"
+        assert analyzer.model == model_config.GEMINI_JUDGE_MODEL
 
     def test_model_env_var_overrides_default(
         self, monkeypatch: pytest.MonkeyPatch

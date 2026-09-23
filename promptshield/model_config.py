@@ -26,9 +26,18 @@ Pinning status, and why each is what it is
     is intentional (see ``docs/WEB_ARCHITECTURE.md``, Decision 2) and is why
     there are two constants rather than one.
 
-``gemini-2.0-flash-001`` — Gemini judge
-    Already pinned. Google's ``-001`` suffix *is* the pinned form; the bare
-    ``gemini-2.0-flash`` is the alias that moves.
+``gemini-3.6-flash`` — Gemini judge
+    Repinned. The previous ``gemini-2.0-flash-001`` was retired by Google and
+    now returns a hard 404, which the eval harness found the moment it started
+    using Gemini as a fallback judge: every fallback call failed and the case
+    was recorded unjudged.
+
+    The ``-001`` reasoning no longer applies, because this generation does not
+    publish a dated form — ``gemini-3.6-flash-001`` is a 404 too. The bare id is
+    what Google serves, so that is what is pinned, and a retirement is at least
+    loud: a 404 fails visibly rather than silently changing behaviour. Note that
+    a live model can still answer 503 under load; that is transient and the SDK
+    retries it, unlike the permanent 404 a retired id gives.
 
 ``llama3.2:3b`` — Ollama judge, deliberately NOT pinned
     Ollama resolves tags against the operator's own local model store, and the
@@ -57,7 +66,7 @@ WEB_ANTHROPIC_JUDGE_MODEL = "claude-sonnet-4-6"
 OPENAI_JUDGE_MODEL = "gpt-4o-mini-2024-07-18"
 OPENAI_JUDGE_MODEL_ENV = "PROMPTSHIELD_ANALYZER_OPENAI_MODEL"
 
-GEMINI_JUDGE_MODEL = "gemini-2.0-flash-001"
+GEMINI_JUDGE_MODEL = "gemini-3.6-flash"
 GEMINI_JUDGE_MODEL_ENV = "PROMPTSHIELD_ANALYZER_GEMINI_MODEL"
 
 OLLAMA_JUDGE_MODEL = "llama3.2:3b"

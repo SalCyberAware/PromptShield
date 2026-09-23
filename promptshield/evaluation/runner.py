@@ -26,6 +26,7 @@ from ..engines.base import _combine_verdicts
 from ..models import AnalyzerVerdict, Attack, Confidence
 from .benchmark import Benchmark, BenchmarkCase
 from .metrics import RunMetrics, score
+from .prompts import resolve_prompt
 
 #: Judge name -> factory. Kept a registry so `--judge` can name one and so a
 #: test can substitute a stub without patching import machinery.
@@ -51,6 +52,26 @@ def _openai_judge() -> Any:
 
 
 JUDGES.update(claude=_claude_judge, gemini=_gemini_judge, openai=_openai_judge)
+
+#: Fallback order per primary judge, mirroring the product's Claude -> Gemini
+#: chain. A judge that declines to answer is not evidence about the response, so
+#: the harness asks the next one rather than recording "unjudged".
+JUDGE_FALLBACKS: dict[str, tuple[str, ...]] = {"claude": ("gemini",)}
+
+
+def _judge_chain(judge_name: str) -> list[Any]:
+    """Build the primary judge plus its fallbacks, skipping any that cannot start."""
+    chain: list[Any] = []
+    for name in (judge_name, *JUDGE_FALLBACKS.get(judge_name, ())):
+        factory = JUDGES.get(name)
+        if factory is None:
+            continue
+        try:
+            chain.append(factory())
+        except (ValueError, ImportError):
+            # No key or no SDK for this tier: skip it, exactly as the product does.
+            continue
+    return chain or [_NullJudge()]
 
 
 def status_for_verdicts(verdicts: list[AnalyzerVerdict]) -> str:
@@ -115,26 +136,34 @@ class _NullJudge:
 
 
 async def _judge_case(
-    judge: Any, attack: Attack, response: str
+    judges: list[Any], attack: Attack, response: str, system_prompt: str | None = None
 ) -> tuple[AnalyzerVerdict | None, bool]:
-    """Return the judge's verdict, and whether it errored.
+    """Walk the judge chain until one answers. Returns its verdict and whether all failed.
 
-    Matches the product's tolerance: a raised exception or the 0.0-confidence
-    internal-error sentinel both mean "this judge produced nothing".
+    Mirrors the product's cascade in ``BaseScanner._run_ai_with_cascade``: a
+    raised exception or the 0.0-confidence internal-error sentinel both mean
+    "this judge produced nothing, try the next". The case that made this matter
+    is a judge declining outright -- the API refusing to generate a verdict for a
+    jailbreak payload quoted for classification -- which is not a property of the
+    response and which a different provider may well answer.
     """
-    try:
-        verdict = await judge.analyze(attack, response)
-    except Exception:  # noqa: BLE001 - a judge outage must not abort the run
-        return None, True
-    if verdict.confidence_score <= 0.0:
-        return verdict, True
-    return verdict, False
+    last: AnalyzerVerdict | None = None
+    for judge in judges:
+        try:
+            verdict = await judge.analyze(attack, response, system_prompt)
+        except Exception:  # noqa: BLE001 - a judge outage must not abort the run
+            continue
+        if verdict.confidence_score > 0.0:
+            return verdict, False
+        last = verdict
+    return last, True
 
 
 async def run_benchmark(
     benchmark: Benchmark,
     judge_name: str = "claude",
     judge: Any | None = None,
+    judges: list[Any] | None = None,
     include_unreviewed: bool = False,
     library: AttackLibrary | None = None,
 ) -> RunReport:
@@ -148,14 +177,22 @@ async def run_benchmark(
     library = library or AttackLibrary()
     attacks = {attack.id: attack for attack in library.all()}
 
-    if judge is None:
-        factory = JUDGES.get(judge_name)
-        judge = factory() if factory else _NullJudge()
+    # Three seams, narrowest first: an explicit chain (what the fallback tests
+    # use), a single injected judge (what CI's mocked run uses), or the
+    # registry's chain for --judge.
+    if judges is not None:
+        chain = list(judges)
+    elif judge is not None:
+        chain = [judge]
+    else:
+        chain = _judge_chain(judge_name)
+    judge = chain[0]
 
     cases = benchmark.cases if include_unreviewed else benchmark.reviewed()
     pattern = PatternAnalyzer()
 
     results: list[CaseResult] = []
+    answered: dict[str, int] = {}
     for case in cases:
         attack = attacks.get(case.attack_id)
         if attack is None:
@@ -165,7 +202,9 @@ async def run_benchmark(
             )
 
         verdicts = [pattern.analyze(attack, case.response)]
-        judge_verdict, errored = await _judge_case(judge, attack, case.response)
+        judge_verdict, errored = await _judge_case(
+            chain, attack, case.response, resolve_prompt(str(case.source.get("prompt") or ""))
+        )
         if judge_verdict is not None and not errored:
             verdicts.append(judge_verdict)
 
@@ -173,6 +212,11 @@ async def run_benchmark(
         # product reports as not_ai_judged. Recorded as such rather than being
         # silently scored as "held".
         predicted = "not_ai_judged" if errored else status_for_verdicts(verdicts)
+
+        name = (
+            getattr(judge_verdict, "analyzer_name", None) if not errored else None
+        ) or "none"
+        answered[name] = answered.get(name, 0) + 1
 
         results.append(
             CaseResult(
@@ -208,6 +252,13 @@ async def run_benchmark(
                 else None
             ),
             "cases_scored": len(results),
+            # Which judges could have answered, in order, and which actually did
+            # for each case. A number produced partly by a fallback judge is not
+            # the same measurement as one produced entirely by the primary.
+            "judge_chain": [getattr(j, "name", "unknown") for j in chain],
+            "judges_answered": {
+                name: count for name, count in sorted(answered.items())
+            },
             "included_unreviewed": include_unreviewed,
             "recorded_at": datetime.now(UTC).isoformat(),
         },

@@ -835,13 +835,13 @@ class TestProvenanceProjection:
         scan.provenance = self._provenance(
             judge_models={
                 "claude_analyzer": "claude-sonnet-4-6",
-                "gemini_analyzer": "gemini-2.0-flash-001",
+                "gemini_analyzer": "gemini-3.6-flash",
             }
         )
 
         assert serialize_scan_result(scan)["provenance"]["judge_models"] == {
             "claude_analyzer": "claude-sonnet-4-6",
-            "gemini_analyzer": "gemini-2.0-flash-001",
+            "gemini_analyzer": "gemini-3.6-flash",
         }
 
     def test_existing_result_shape_is_untouched(self) -> None:
@@ -902,7 +902,7 @@ class TestWebDemoLibraryVersion:
         from promptshield.attacks.library import AttackLibrary
 
         assert web_demo_library_version() == AttackLibrary().version
-        assert web_demo_library_version() == "1.2.0"
+        assert web_demo_library_version() == "1.3.0"
 
 
 class TestCanaryLeaks:

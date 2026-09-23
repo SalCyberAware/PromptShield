@@ -23,9 +23,14 @@ class StubJudge:
         self.name = name
         self.model = model
         self.calls: list[str] = []
+        #: What the judge was told the target's system prompt was, per call.
+        self.system_prompts: list[str | None] = []
 
-    async def analyze(self, attack: Any, response: str) -> AnalyzerVerdict:
+    async def analyze(
+        self, attack: Any, response: str, system_prompt: str | None = None
+    ) -> AnalyzerVerdict:
         self.calls.append(attack.id)
+        self.system_prompts.append(system_prompt)
         success, confidence = self._verdicts.get(attack.id, (False, 0.9))
         return AnalyzerVerdict(
             analyzer_name=self.name,
@@ -41,7 +46,9 @@ class ExplodingJudge:
     name = "exploding_judge"
     model = "stub-model-v1"
 
-    async def analyze(self, attack: Any, response: str) -> AnalyzerVerdict:
+    async def analyze(
+        self, attack: Any, response: str, system_prompt: str | None = None
+    ) -> AnalyzerVerdict:
         raise RuntimeError("judge is down")
 
 

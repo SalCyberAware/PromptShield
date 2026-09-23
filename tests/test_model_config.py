@@ -27,10 +27,17 @@ class TestPinsAreExactVersions:
         assert model_config.OPENAI_JUDGE_MODEL == "gpt-4o-mini-2024-07-18"
         assert model_config.OPENAI_JUDGE_MODEL != "gpt-4o-mini"
 
-    def test_gemini_judge_carries_googles_pinned_suffix(self) -> None:
-        """Google's `-001` IS the pin; the bare name is the alias that moves."""
-        assert model_config.GEMINI_JUDGE_MODEL == "gemini-2.0-flash-001"
-        assert model_config.GEMINI_JUDGE_MODEL != "gemini-2.0-flash"
+    def test_gemini_judge_names_a_model_google_still_serves(self) -> None:
+        """The `-001` pin was retired out from under us.
+
+        `gemini-2.0-flash-001` now returns a hard 404, which surfaced the moment
+        the eval harness started using Gemini as a fallback judge: every
+        fallback call failed and the case was recorded unjudged. This
+        generation publishes no dated form -- `gemini-3.6-flash-001` is a 404
+        too -- so the bare id is what Google serves and what is pinned.
+        """
+        assert model_config.GEMINI_JUDGE_MODEL == "gemini-3.6-flash"
+        assert "2.0" not in model_config.GEMINI_JUDGE_MODEL
 
     @pytest.mark.parametrize(
         "model",
