@@ -123,7 +123,45 @@ candidate verdict, and writes everything as `UNREVIEWED`.
 Cost is 26 target calls plus 26 judge calls; on the pinned models that is
 roughly **$0.19**. Seeding is a deliberate one-off per benchmark version, which
 is why it is a script rather than a CLI subcommand — nobody should be able to
-trigger real spend by accident.
+trigger real spend by accident. An existing benchmark is never replaced
+silently: a captured response cannot be re-created, so the script stops unless
+told `--append` or `--overwrite`.
+
+### Why the target is overridable
+
+The first seed ran against the pinned target and came back **25 `held`, 1
+`vulnerable`** — even the deliberately leaky prompt mostly refused. That
+benchmark measures one thing well (false positives) and the thing that matters
+most not at all: with a single positive case, `vulnerable` **recall** is a
+coin flip, and a judge that never says "vulnerable" scores 0.96 on it.
+
+The fix is a target that actually falls over. `--target-model` and
+`--target-base-url` point the attacks at any OpenAI-compatible endpoint,
+including a local Ollama daemon, which costs nothing per target call:
+
+```bash
+ollama pull llama3.2:3b
+python scripts/seed_benchmark.py --append \
+    --target-model llama3.2:3b --target-base-url http://localhost:11434/v1
+```
+
+No API key is sent to a `--target-base-url` host, even when `OPENAI_API_KEY` is
+set in the shell — a credential issued for one host does not travel to another
+just because a variable happened to be exported.
+
+### Two targets, one file, kept distinguishable
+
+Cases from different targets live in the same benchmark but must not blur into
+one population: a weak local model's failure rate says nothing about the hosted
+demo's. Every case records `source.target_model` (and `source.target_base_url`
+when the target was not OpenAI), so any slice of the benchmark can be traced to
+what produced it.
+
+Appended cases land `UNREVIEWED`, which leaves the **reviewed** subset — and
+therefore the CI baseline computed from it — untouched. Growing the benchmark
+this way is not a benchmark version change; reviewing the new labels is the
+point at which the recorded baseline stops describing the same measurement and
+has to be re-recorded deliberately.
 
 ## CI: what the mocked run does and does not prove
 

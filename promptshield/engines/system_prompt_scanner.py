@@ -18,6 +18,11 @@ target call.
 
 The target has no real URL, so callers build the ``TargetConfig`` with an
 ``internal://<model>`` sentinel; that value flows through to ``Finding.target_url``.
+
+The model does not have to be OpenAI's. ``base_url`` repoints the client at any
+OpenAI-compatible chat-completions endpoint — an Ollama daemon
+(``http://localhost:11434/v1``), vLLM, LM Studio — which is how the eval
+harness captures responses from a weak local target without a second scanner.
 """
 from __future__ import annotations
 
@@ -55,9 +60,15 @@ class SystemPromptScanner(BaseScanner):
 
     Constructor key precedence mirrors ``OpenAIAnalyzer``:
     ``PROMPTSHIELD_TARGET_OPENAI_KEY`` → ``OPENAI_API_KEY`` (explicit ``api_key``
-    arg wins over both). Model precedence: explicit ``model`` arg →
-    ``PROMPTSHIELD_TARGET_MODEL`` → the pin in ``model_config``.
+    arg wins over both) — but only when talking to OpenAI. Set ``base_url`` and
+    the environment fallback is dropped; see ``__init__``. Model precedence:
+    explicit ``model`` arg → ``PROMPTSHIELD_TARGET_MODEL`` → the pin in
+    ``model_config``.
     """
+
+    #: Sent as the bearer token when ``base_url`` names an endpoint with no key
+    #: concept (Ollama, vLLM, LM Studio). The SDK insists on *some* string.
+    NO_KEY_REQUIRED = "not-required"
 
     def __init__(
         self,
@@ -66,15 +77,25 @@ class SystemPromptScanner(BaseScanner):
         system_prompt: str,
         model: str | None = None,
         api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         super().__init__(target, attacks)
         self.system_prompt = system_prompt
         self.model = model or default_target_model()
-        self.api_key = (
-            api_key
-            or os.getenv("PROMPTSHIELD_TARGET_OPENAI_KEY")
-            or os.getenv("OPENAI_API_KEY")
-        )
+        self.base_url = base_url
+        self.api_key: str | None
+        if base_url:
+            # Pointed at an endpoint that is not OpenAI: deliberately do NOT
+            # fall back to the environment's OpenAI key. A local daemon has no
+            # use for one, and a real credential must never be sent to a host it
+            # was not issued for just because the variable happened to be set.
+            self.api_key = api_key or self.NO_KEY_REQUIRED
+        else:
+            self.api_key = (
+                api_key
+                or os.getenv("PROMPTSHIELD_TARGET_OPENAI_KEY")
+                or os.getenv("OPENAI_API_KEY")
+            )
 
         if not self.api_key:
             raise ValueError(
@@ -87,7 +108,7 @@ class SystemPromptScanner(BaseScanner):
     async def _get_client(self) -> AsyncOpenAI:
         """Lazy-create the AsyncOpenAI client (mirrors APIScanner's lazy client)."""
         if self._client is None:
-            self._client = AsyncOpenAI(api_key=self.api_key)
+            self._client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         return self._client
 
     def _extract_response_text(self, completion: object) -> str:

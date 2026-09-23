@@ -97,6 +97,70 @@ class TestKeyPrecedence:
             )
 
 
+class TestLocalEndpoint:
+    """Pointing the target at an OpenAI-compatible endpoint that is not OpenAI."""
+
+    async def test_base_url_is_passed_to_the_client(
+        self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack
+    ) -> None:
+        """The SDK client is built against the endpoint the caller named."""
+        scanner = SystemPromptScanner(
+            system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT,
+            model="llama3.2:3b", base_url="http://localhost:11434/v1",
+        )
+        with patch("promptshield.engines.system_prompt_scanner.AsyncOpenAI") as mock_openai:
+            await scanner._get_client()
+        _, kwargs = mock_openai.call_args
+        assert kwargs["base_url"] == "http://localhost:11434/v1"
+
+    def test_local_endpoint_needs_no_key(
+        self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack
+    ) -> None:
+        """A local daemon has no key concept, so an absent key must not raise."""
+        scanner = SystemPromptScanner(
+            system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT,
+            base_url="http://localhost:11434/v1",
+        )
+        assert scanner.api_key == SystemPromptScanner.NO_KEY_REQUIRED
+
+    def test_openai_key_is_never_sent_to_another_host(
+        self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The env fallback is dropped once base_url names someone else's endpoint.
+
+        A real OpenAI credential must not travel to a host it was not issued
+        for merely because the variable happened to be set in the shell.
+        """
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-generic-env")
+        monkeypatch.setenv("PROMPTSHIELD_TARGET_OPENAI_KEY", "sk-target-env")
+        scanner = SystemPromptScanner(
+            system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT,
+            base_url="http://localhost:11434/v1",
+        )
+        assert scanner.api_key == SystemPromptScanner.NO_KEY_REQUIRED
+
+    def test_explicit_key_still_wins_for_a_gateway_that_needs_one(
+        self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack
+    ) -> None:
+        """Some compatible gateways do authenticate; an explicit key is honoured."""
+        scanner = SystemPromptScanner(
+            system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT,
+            base_url="https://gateway.example/v1", api_key="sk-gateway",
+        )
+        assert scanner.api_key == "sk-gateway"
+
+    def test_default_target_still_has_no_base_url(
+        self, system_prompt_target: TargetConfig, sample_attack_llm01: Attack
+    ) -> None:
+        """Omitting base_url leaves the SDK on its own default (api.openai.com)."""
+        scanner = SystemPromptScanner(
+            system_prompt_target, [sample_attack_llm01], system_prompt=SYSTEM_PROMPT,
+            api_key="sk-test",
+        )
+        assert scanner.base_url is None
+
+
 class TestModelResolution:
     """Tests for target model selection."""
 
@@ -217,7 +281,9 @@ class TestClientLifecycle:
             second = await scanner._get_client()
 
         assert first is second
-        mock_cls.assert_called_once_with(api_key="sk-test")
+        # base_url=None leaves the SDK on api.openai.com; it is passed explicitly
+        # so the OpenAI and local-endpoint paths build the client the same way.
+        mock_cls.assert_called_once_with(api_key="sk-test", base_url=None)
 
 
 class TestCleanup:
