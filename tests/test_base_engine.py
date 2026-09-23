@@ -459,18 +459,29 @@ class TestRunScanAIFallbackChain:
         openai = _mock_ai_analyzer(
             "openai_analyzer", side_effect=RuntimeError("OpenAI blew up too")
         )
+        # Gemini drops out of the cascade on its own (no key, cleared by the
+        # autouse fixture), but Ollama has no key to be missing: it constructs
+        # wherever the SDK is installed and then calls localhost. Without this
+        # stub the assertion below depends on whether the developer happens to
+        # be running an Ollama daemon -- green in CI, red on a machine that has
+        # one. Stub it so "the cascade produced nothing" is what is tested.
+        ollama = _mock_ai_analyzer(
+            "ollama_analyzer", side_effect=RuntimeError("Ollama blew up as well")
+        )
 
         with patch(
             "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
         ), patch(
             "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
+        ), patch(
+            "promptshield.analyzers.ollama_analyzer.OllamaAnalyzer", return_value=ollama
         ):
             scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
 
         assert scan.status == ScanStatus.COMPLETED
         assert any("Claude blew up" in err for err in scanner.errors)
         assert any("OpenAI blew up too" in err for err in scanner.errors)
-        # Neither AI analyzer produced a verdict, so neither appears.
+        # No AI analyzer produced a verdict, so none appears.
         assert scan.analyzers_used == ["pattern_analyzer"]
         # The pattern analyzer still detected the attack on its own.
         assert len(scan.findings) == 1
@@ -548,7 +559,7 @@ class TestRunScanAIFallbackChain:
     async def test_all_three_ai_analyzers_fail_pattern_only_result(
         self, sample_attack_llm01: Attack, successful_response_llm01: str
     ) -> None:
-        """When the entire cascade fails, the scan continues pattern-only."""
+        """When every tier of the cascade fails, the scan continues pattern-only."""
         scanner = _FakeScanner(_target(), [sample_attack_llm01], [successful_response_llm01])
         claude = _mock_ai_analyzer(
             "claude_analyzer", side_effect=RuntimeError("Claude blew up")
@@ -559,6 +570,11 @@ class TestRunScanAIFallbackChain:
         gemini = _mock_ai_analyzer(
             "gemini_analyzer", side_effect=RuntimeError("Gemini blew up three")
         )
+        # The fourth tier, stubbed for the same reason as above: Ollama needs no
+        # key, so an unstubbed cascade reaches a real local daemon if one is up.
+        ollama = _mock_ai_analyzer(
+            "ollama_analyzer", side_effect=RuntimeError("Ollama blew up four")
+        )
 
         with patch(
             "promptshield.analyzers.claude_analyzer.ClaudeAnalyzer", return_value=claude
@@ -566,6 +582,8 @@ class TestRunScanAIFallbackChain:
             "promptshield.analyzers.openai_analyzer.OpenAIAnalyzer", return_value=openai
         ), patch(
             "promptshield.analyzers.gemini_analyzer.GeminiAnalyzer", return_value=gemini
+        ), patch(
+            "promptshield.analyzers.ollama_analyzer.OllamaAnalyzer", return_value=ollama
         ):
             scan = await scanner.run_scan(scan_id="S", use_ai_analyzer=True)
 
@@ -573,7 +591,8 @@ class TestRunScanAIFallbackChain:
         assert any("Claude blew up" in err for err in scanner.errors)
         assert any("OpenAI blew up too" in err for err in scanner.errors)
         assert any("Gemini blew up three" in err for err in scanner.errors)
-        # None of the AI analyzers produced a verdict.
+        assert any("Ollama blew up four" in err for err in scanner.errors)
+        # No tier of the cascade produced a verdict.
         assert scan.analyzers_used == ["pattern_analyzer"]
         assert len(scan.findings) == 1
         verdict_names = {v.analyzer_name for v in scan.findings[0].analyzer_verdicts}
