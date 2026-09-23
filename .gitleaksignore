@@ -31,3 +31,20 @@
 # lingering copy in 288505f, for the same reason as the entry above: the scan
 # covers the full history, and that commit is already published.
 288505f3ce8a54d7c8799faa5091a8e9f73bf493:.gitleaksignore:generic-api-key:11
+
+# ── 58e2979, tests/test_canary.py:35-36 ───────────────────────────────────────
+# generic-api-key and stripe-access-token fired on fabricated fixtures in the
+# secret-canary tests. A security tool's own test suite is the one place
+# invented credentials belong, and the scanner cannot tell an invented value
+# from a real one -- it has only shape and entropy, which is exactly what those
+# fixtures were built to have.
+#
+# The working tree is already clean: the fixtures were rewritten as repetitive
+# low-entropy values that exercise the same extraction paths without looking
+# like credentials, so no future commit can reproduce these findings. Both
+# entries exist only because the Security job scans the full history, where
+# 58e2979 is already published.
+#
+# Described in prose rather than quoted, for the reason the entry above gives.
+58e29793952882bc2298b7a74027ee80c2da6b8c:tests/test_canary.py:generic-api-key:35
+58e29793952882bc2298b7a74027ee80c2da6b8c:tests/test_canary.py:stripe-access-token:36

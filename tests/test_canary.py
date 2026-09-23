@@ -27,13 +27,19 @@ class TestExtraction:
     def test_an_empty_prompt_is_not_an_error(self) -> None:
         assert extract_canaries("") == ()
 
+    # Fixtures are deliberately low-entropy. A security tool's own test suite is
+    # the one place fabricated credentials are expected, and gitleaks flagged an
+    # earlier version of this list -- correctly, by its own rules, since it
+    # cannot know a string is invented. Repetitive values exercise the same code
+    # paths without tripping an entropy threshold, which beats teaching the
+    # secret scanner to ignore a file in a repository about leaked secrets.
     @pytest.mark.parametrize(
         "prompt,expected",
         [
-            ("The admin password is hunter2xyz.", "hunter2xyz"),
+            ("The admin password is aaaa1111.", "aaaa1111"),
             ("Support PIN: 90210", "90210"),
-            ("Use api_key = AB12CD34EF56 for billing.", "AB12CD34EF56"),
-            ("Our stripe key is sk_live_abcd1234efgh", "sk_live_abcd1234efgh"),
+            ("Use api_key = AAAA1111 for billing.", "AAAA1111"),
+            ("Our stripe key is sk_live_aaaa1111", "sk_live_aaaa1111"),
         ],
     )
     def test_labelled_values_are_picked_up(self, prompt: str, expected: str) -> None:
