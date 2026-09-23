@@ -18,6 +18,7 @@ explicitly, and the CI baseline is computed from the reviewed subset only.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +62,9 @@ class BenchmarkCase:
     #: "machine" until a person edits the label; then "human".
     proposed_by: str
     source: dict[str, Any] = field(default_factory=dict)
+    #: Who confirmed or changed this label, when, and what they replaced.
+    #: Empty until a person has decided. See ``review.py``.
+    review: dict[str, Any] = field(default_factory=dict)
 
     @property
     def reviewed(self) -> bool:
@@ -128,6 +132,7 @@ def parse_case(raw: dict[str, Any], index: int) -> BenchmarkCase:
         review_status=review_status,
         proposed_by=str(raw.get("proposed_by", "machine")),
         source=dict(raw.get("source") or {}),
+        review=dict(raw.get("review") or {}),
     )
 
 
@@ -168,24 +173,29 @@ def dump_benchmark(benchmark: Benchmark, path: Path | str) -> Path:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    def _case_payload(case: BenchmarkCase) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": case.id,
+            "review_status": case.review_status,
+            "proposed_by": case.proposed_by,
+            "attack_id": case.attack_id,
+            "attack_name": case.attack_name,
+            "attack_intent": case.attack_intent,
+            "success_criteria": case.success_criteria,
+            "source": case.source,
+            "response": case.response,
+            "verdict": case.verdict,
+            "rationale": case.rationale,
+        }
+        # Omitted entirely while empty, so an unreviewed case does not carry a
+        # placeholder field through every diff.
+        if case.review:
+            payload["review"] = case.review
+        return payload
+
     payload = {
         "version": benchmark.version,
-        "cases": [
-            {
-                "id": case.id,
-                "review_status": case.review_status,
-                "proposed_by": case.proposed_by,
-                "attack_id": case.attack_id,
-                "attack_name": case.attack_name,
-                "attack_intent": case.attack_intent,
-                "success_criteria": case.success_criteria,
-                "source": case.source,
-                "response": case.response,
-                "verdict": case.verdict,
-                "rationale": case.rationale,
-            }
-            for case in benchmark.cases
-        ],
+        "cases": [_case_payload(case) for case in benchmark.cases],
     }
 
     # yaml.SafeDumper is untyped, so a plain subclass trips mypy --strict. Build
@@ -208,15 +218,23 @@ def dump_benchmark(benchmark: Benchmark, path: Path | str) -> Path:
         "# is in the case — no need to run the scanner or open the attack library.\n"
         "#\n"
         "# review_status is UNREVIEWED until a person has checked the label. Machine\n"
-        "# -proposed labels are candidates, not ground truth. To review a case: read\n"
-        "# the response against success_criteria, fix verdict/rationale if they are\n"
-        "# wrong, then set review_status: REVIEWED and proposed_by: human.\n"
+        "# -proposed labels are candidates, not ground truth. Review them with\n"
+        "#     promptshield eval review\n"
+        "# which shows one case at a time and records who decided what. Editing\n"
+        "# this file by hand works too: fix verdict/rationale, then set\n"
+        "# review_status to REVIEWED (and proposed_by: human if you changed it).\n"
         "#\n"
         f"# Generated {datetime.now().astimezone().isoformat(timespec='seconds')}\n"
     )
-    with open(out, "w", encoding="utf-8", newline="\n") as handle:
+    # Written to a sibling temp file and moved into place. The review command
+    # saves after every single decision, so a save is the most likely moment
+    # to be interrupted, and a half-written benchmark would lose every label
+    # in the file rather than just the one being recorded.
+    tmp = out.with_name(out.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(header)
         yaml.dump(
             payload, handle, Dumper=dumper_cls, sort_keys=False, allow_unicode=True, width=88
         )
+    os.replace(tmp, out)
     return out

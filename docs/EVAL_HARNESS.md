@@ -59,14 +59,16 @@ baseline is computed from the reviewed subset alone. A machine-proposed label is
 a starting point for review, never ground truth — scoring a judge against labels
 that judge's sibling produced would measure agreement, not accuracy.
 
-To review a case: read `response` against `success_criteria`, correct `verdict`
-and `rationale` if they are wrong, then set `review_status: REVIEWED` and
+To review cases, run `promptshield eval review` (below). Hand-editing the file
+works too: read `response` against `success_criteria`, correct `verdict` and
+`rationale` if they are wrong, then set `review_status: REVIEWED` and
 `proposed_by: human`.
 
 ## Running it
 
 ```bash
 promptshield eval cases                    # what is in the benchmark, and its review state
+promptshield eval review                   # confirm or correct labels, one case at a time
 promptshield eval run --judge claude       # score Claude   (live, costs money)
 promptshield eval run --judge gemini       # score Gemini   (live, costs money)
 promptshield eval run --judge none         # score the pattern floor alone (free)
@@ -176,6 +178,53 @@ therefore the CI baseline computed from it — untouched. Growing the benchmark
 this way is not a benchmark version change; reviewing the new labels is the
 point at which the recorded baseline stops describing the same measurement and
 has to be re-recorded deliberately.
+
+## Reviewing: turning candidates into ground truth
+
+```bash
+promptshield eval review                       # the whole queue, vulnerable first
+promptshield eval review --reviewer "Sal"      # defaults to your git user.name
+```
+
+Shows one unreviewed case at a time with everything needed to decide it on
+screen — the attack and what it attempts, what counts as success, **the system
+prompt that was under attack**, the full response the target gave, and the
+proposed label with the reasoning behind it. Nothing has to be looked up
+elsewhere; that is the same property the case format is built around.
+
+Then one key: `c` confirms, `v`/`h`/`n` changes the label to vulnerable / held /
+needs_review and asks for a one-line reason, `s` skips, `q` stops.
+
+**Vulnerable first.** They are the smallest class, they are what `vulnerable`
+recall is computed from, and a wrong one costs more than a wrong `held`. The
+held majority is mostly refusals, which read fast once the eye is in.
+
+**The file is written after every decision**, to a temp file that is then moved
+into place. Stopping partway, closing the terminal, or losing the machine keeps
+everything already decided — and a save interrupted mid-write cannot leave a
+half-parsed benchmark, which would lose every label in the file rather than the
+one being recorded.
+
+### What a decision records
+
+| field | on confirm | on change |
+|---|---|---|
+| `review_status` | `REVIEWED` | `REVIEWED` |
+| `verdict` | unchanged | the reviewer's |
+| `rationale` | unchanged | the reviewer's one-line reason |
+| `proposed_by` | stays `machine` | becomes `human` |
+| `review` | who, when, `confirmed` | who, when, `changed`, plus the previous verdict and the rationale it replaced |
+
+`proposed_by` flipping only on a change is deliberate. A confirmed machine
+proposal and a human-authored label are different things, and the pair
+(`REVIEWED`, `machine`) says precisely that a person read it and the machine had
+it right — which is the only way to ask later how good the candidate labels
+were. Nothing a reviewer overrides is deleted; the superseded rationale moves
+into `review`.
+
+A change needs a reason of at least 15 characters, the same floor the loader
+puts on any rationale. "wrong" is not a reason, and the rationale is what gets
+printed beside the judge's reasoning on every future disagreement.
 
 ## CI: what the mocked run does and does not prove
 

@@ -11,7 +11,17 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .baseline import BaselineError, compare_to_baseline, load_baseline, write_baseline
-from .benchmark import load_benchmark
+from .benchmark import BenchmarkCase, dump_benchmark, load_benchmark
+from .prompts import resolve_prompt
+from .review import (
+    ReviewError,
+    apply_decision,
+    change_case,
+    confirm_case,
+    default_reviewer,
+    queue_summary,
+    review_queue,
+)
 from .runner import JUDGES, run_benchmark_sync
 
 console = Console()
@@ -221,3 +231,173 @@ def evaluate_cases(benchmark_path: Path | None, unreviewed_only: bool) -> None:
         f"{len(benchmark.reviewed())} reviewed, {len(benchmark.unreviewed())} unreviewed "
         f"· benchmark v{benchmark.version}"
     )
+
+
+_ACTIONS = {
+    "c": "confirm",
+    "v": "vulnerable",
+    "h": "held",
+    "n": "needs_review",
+    "s": "skip",
+    "q": "quit",
+}
+
+_VERDICT_STYLE = {
+    "vulnerable": "red",
+    "held": "green",
+    "needs_review": "yellow",
+}
+
+
+def _show_case(
+    case: BenchmarkCase, position: int, total: int, remaining: dict[str, int]
+) -> None:
+    """Print everything needed to decide, so nothing has to be looked up elsewhere."""
+    left = "  ".join(f"{verdict}: {count}" for verdict, count in remaining.items() if count)
+    console.rule(f"[bold]{case.id}[/bold]  ·  {position} of {total} in this queue")
+    console.print(f"[dim]remaining unreviewed — {left}[/dim]\n")
+
+    console.print(
+        Panel(
+            f"[bold]{case.attack_name}[/bold]  [dim]({case.attack_id})[/dim]\n\n"
+            f"[bold]what it attempts[/bold]\n{case.attack_intent}\n\n"
+            f"[bold]counts as success[/bold]\n{case.success_criteria}",
+            title="the attack",
+            border_style="cyan",
+        )
+    )
+
+    prompt_key = str(case.source.get("prompt") or "")
+    prompt_text = resolve_prompt(prompt_key)
+    console.print(
+        Panel(
+            prompt_text or "[dim](not recorded for this case)[/dim]",
+            title=f"system prompt under attack — {prompt_key or 'unknown'}",
+            border_style="blue",
+        )
+    )
+
+    target = str(case.source.get("target_model") or "unknown")
+    console.print(
+        Panel(
+            case.response,
+            title=f"what {target} actually replied",
+            border_style="magenta",
+        )
+    )
+
+    style = _VERDICT_STYLE.get(case.verdict, "white")
+    console.print(
+        Panel(
+            f"[bold {style}]{case.verdict}[/bold {style}]\n\n{case.rationale}",
+            title=f"proposed label — {case.proposed_by}",
+            border_style=style,
+        )
+    )
+
+
+@evaluate.command("review")
+@click.option(
+    "--benchmark", "benchmark_path", type=click.Path(path_type=Path),
+    help="Benchmark file (defaults to the packaged one).",
+)
+@click.option(
+    "--reviewer", default=None,
+    help="Recorded against each decision. Defaults to your git user.name.",
+)
+def evaluate_review(benchmark_path: Path | None, reviewer: str | None) -> None:
+    """Review unreviewed cases one at a time, confirming or correcting each label.
+
+    Vulnerable cases come first: they are the smallest class, they are what
+    recall is computed from, and a wrong one costs more than a wrong held.
+
+    The file is written after every decision, so stopping partway — or losing
+    the terminal — keeps everything already decided.
+    """
+    benchmark = load_benchmark(benchmark_path)
+    path = benchmark.path
+    if path is None:
+        raise SystemExit("benchmark has no path on disk to save to")
+
+    who = reviewer or default_reviewer()
+    queue = review_queue(benchmark)
+    if not queue:
+        console.print(
+            f"[green]Nothing to review.[/green] All {len(benchmark)} case(s) in "
+            f"benchmark v{benchmark.version} are REVIEWED."
+        )
+        return
+
+    console.print(
+        f"[bold]{len(queue)}[/bold] unreviewed case(s) · reviewing as [cyan]{who}[/cyan] · "
+        f"saving to {path}\n"
+    )
+
+    decided = 0
+    skipped = 0
+    for position, case in enumerate(queue, start=1):
+        current = next(c for c in benchmark.cases if c.id == case.id)
+        _show_case(current, position, len(queue), queue_summary(benchmark))
+
+        try:
+            choice = click.prompt(
+                "[c]onfirm  [v]ulnerable  [h]eld  [n]eeds_review  [s]kip  [q]uit",
+                type=click.Choice(sorted(_ACTIONS)),
+                show_choices=False,
+            )
+        except (click.Abort, EOFError):
+            console.print("\n[yellow]Stopped.[/yellow]")
+            break
+
+        action = _ACTIONS[choice]
+        if action == "quit":
+            break
+        if action == "skip":
+            skipped += 1
+            console.print("[dim]skipped — still UNREVIEWED[/dim]\n")
+            continue
+
+        if action != "confirm" and action == current.verdict:
+            # Caught before asking for a reason: the problem is the choice, not
+            # the wording, so re-prompting for a better reason would never end.
+            console.print(
+                f"[yellow]{current.id} is already labeled {action} — "
+                f"press c to confirm it.[/yellow]\n"
+            )
+            skipped += 1
+            continue
+
+        if action == "confirm":
+            updated = confirm_case(current, who)
+        else:
+            reason = ""
+            while True:
+                try:
+                    reason = click.prompt(f"one line on why it is {action}")
+                except (click.Abort, EOFError):
+                    reason = ""
+                    break
+                try:
+                    updated = change_case(current, action, reason, who)
+                    break
+                except ReviewError as exc:
+                    console.print(f"[red]{exc}[/red]")
+            if not reason:
+                console.print("[yellow]No reason given — left UNREVIEWED.[/yellow]\n")
+                skipped += 1
+                continue
+
+        benchmark = apply_decision(benchmark, updated)
+        dump_benchmark(benchmark, path)
+        decided += 1
+        verb = "confirmed" if action == "confirm" else f"changed to {action}"
+        console.print(f"[green]{current.id} {verb} and saved[/green]\n")
+
+    remaining = queue_summary(benchmark)
+    console.print(
+        f"\n[bold]{decided} decided[/bold], {skipped} skipped this session · "
+        f"{len(benchmark.reviewed())}/{len(benchmark)} reviewed overall"
+    )
+    left = "  ".join(f"{v}: {n}" for v, n in remaining.items() if n)
+    if left:
+        console.print(f"still unreviewed — {left}")
