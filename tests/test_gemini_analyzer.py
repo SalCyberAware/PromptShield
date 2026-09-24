@@ -238,3 +238,91 @@ class TestGeminiAnalyzerAnalyze:
             verdict = await analyzer.analyze(sample_attack_llm01, "valid response text")
 
         assert verdict.confidence_score == 1.0
+
+
+@pytest.mark.asyncio
+class TestRetriesWhenTheProviderIsBusy:
+    """Gemini is the fallback judge, so it is asked exactly when the primary has
+    already failed — and a burst of scoring calls is the shape that draws a 503.
+
+    Without a retry, one overloaded minute turned every case the primary declined
+    into an unjudged one, which in the output is indistinguishable from a case
+    nobody could judge. A live scoring run lost three cases this way.
+    """
+
+    @staticmethod
+    def _busy(status: int = 503) -> Exception:
+        exc = Exception(f"{status} UNAVAILABLE. {{'error': {{'code': {status}}}}}")
+        return exc
+
+    @staticmethod
+    def _ok() -> MagicMock:
+        reply = MagicMock()
+        reply.text = '{"success": false, "confidence_score": 0.2, "reasoning": "held"}'
+        return reply
+
+    async def _run(self, analyzer: GeminiAnalyzer, attack: Attack, side_effect: list):
+        analyzer._client = MagicMock()
+        analyzer._client.aio.models.generate_content = AsyncMock(side_effect=side_effect)
+        with patch("promptshield.analyzers.gemini_analyzer.asyncio.sleep", AsyncMock()) as slept:
+            verdict = await analyzer.analyze(attack, "a response")
+        return verdict, analyzer._client.aio.models.generate_content, slept
+
+    async def test_a_503_then_success_produces_a_real_verdict(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        verdict, create, slept = await self._run(
+            analyzer, sample_attack_llm01, [self._busy(), self._ok()]
+        )
+
+        assert create.await_count == 2
+        assert verdict.confidence_score == 0.2
+        assert verdict.success is False
+        assert "held" in verdict.reasoning
+        # Confidence above zero is what tells the cascade a judge actually
+        # answered; 0.0 is the "produced nothing" sentinel.
+        assert verdict.confidence_score > 0.0
+        slept.assert_awaited_once_with(1.0)
+
+    async def test_a_429_is_retried_too(self, sample_attack_llm01: Attack) -> None:
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        verdict, create, _ = await self._run(
+            analyzer, sample_attack_llm01, [self._busy(429), self._ok()]
+        )
+        assert create.await_count == 2
+        assert verdict.confidence_score == 0.2
+
+    async def test_the_backoff_doubles(self, sample_attack_llm01: Attack) -> None:
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        _verdict, create, slept = await self._run(
+            analyzer, sample_attack_llm01, [self._busy(), self._busy(), self._busy(), self._ok()]
+        )
+        assert create.await_count == 4
+        assert [call.args[0] for call in slept.await_args_list] == [1.0, 2.0, 4.0]
+
+    async def test_giving_up_reports_produced_nothing_not_held(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        """The honesty rule survives the retry: an exhausted judge is not a verdict."""
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        verdict, create, _ = await self._run(
+            analyzer, sample_attack_llm01, [self._busy()] * 4
+        )
+        assert create.await_count == 4
+        assert verdict.confidence_score == 0.0
+        assert verdict.success is False
+
+    async def test_a_404_is_not_retried(self, sample_attack_llm01: Attack) -> None:
+        """A retired model id is not a busy provider.
+
+        This is the failure that hid the dead gemini-2.0-flash-001 pin. Retrying
+        it would delay the same permanent error three times over.
+        """
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        dead = Exception("404 NOT_FOUND. This model is no longer available.")
+        verdict, create, slept = await self._run(analyzer, sample_attack_llm01, [dead, self._ok()])
+
+        assert create.await_count == 1
+        slept.assert_not_awaited()
+        assert verdict.confidence_score == 0.0

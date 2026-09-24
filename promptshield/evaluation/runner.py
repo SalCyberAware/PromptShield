@@ -136,7 +136,11 @@ class _NullJudge:
 
 
 async def _judge_case(
-    judges: list[Any], attack: Attack, response: str, system_prompt: str | None = None
+    judges: list[Any],
+    attack: Attack,
+    response: str,
+    system_prompt: str | None = None,
+    attempts: dict[str, int] | None = None,
 ) -> tuple[AnalyzerVerdict | None, bool]:
     """Walk the judge chain until one answers. Returns its verdict and whether all failed.
 
@@ -147,8 +151,11 @@ async def _judge_case(
     jailbreak payload quoted for classification -- which is not a property of the
     response and which a different provider may well answer.
     """
+    attempts = attempts if attempts is not None else {}
     last: AnalyzerVerdict | None = None
-    for judge in judges:
+    for index, judge in enumerate(judges):
+        name = getattr(judge, "name", f"judge{index}")
+        attempts[name] = attempts.get(name, 0) + 1
         try:
             verdict = await judge.analyze(attack, response, system_prompt)
         except Exception:  # noqa: BLE001 - a judge outage must not abort the run
@@ -193,6 +200,10 @@ async def run_benchmark(
 
     results: list[CaseResult] = []
     answered: dict[str, int] = {}
+    #: How often each judge was *asked*, which is the only way to see a fallback
+    #: being reached at all. A fallback that is never called and a fallback that
+    #: is called and fails look identical in `judges_answered` alone.
+    attempts: dict[str, int] = {}
     for case in cases:
         attack = attacks.get(case.attack_id)
         if attack is None:
@@ -203,7 +214,11 @@ async def run_benchmark(
 
         verdicts = [pattern.analyze(attack, case.response)]
         judge_verdict, errored = await _judge_case(
-            chain, attack, case.response, resolve_prompt(str(case.source.get("prompt") or ""))
+            chain,
+            attack,
+            case.response,
+            resolve_prompt(str(case.source.get("prompt") or "")),
+            attempts,
         )
         if judge_verdict is not None and not errored:
             verdicts.append(judge_verdict)
@@ -259,6 +274,7 @@ async def run_benchmark(
             "judges_answered": {
                 name: count for name, count in sorted(answered.items())
             },
+            "judges_called": {name: count for name, count in sorted(attempts.items())},
             "included_unreviewed": include_unreviewed,
             "recorded_at": datetime.now(UTC).isoformat(),
         },

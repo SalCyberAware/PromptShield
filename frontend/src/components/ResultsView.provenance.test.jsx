@@ -71,7 +71,7 @@ describe('provenance footer', () => {
           ...PROVENANCE,
           judge_models: {
             claude_analyzer: 'claude-sonnet-4-6',
-            gemini_analyzer: 'gemini-2.0-flash-001',
+            gemini_analyzer: 'gemini-3.6-flash',
           },
         })}
         onReset={() => {}}
@@ -79,7 +79,7 @@ describe('provenance footer', () => {
     )
     const scope = within(footer())
     expect(scope.getByText('claude-sonnet-4-6')).toBeInTheDocument()
-    expect(scope.getByText('gemini-2.0-flash-001')).toBeInTheDocument()
+    expect(scope.getByText('gemini-3.6-flash')).toBeInTheDocument()
     expect(scope.getByText(/^Judges$/)).toBeInTheDocument()
   })
 
