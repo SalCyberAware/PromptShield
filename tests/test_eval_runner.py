@@ -369,3 +369,39 @@ class TestJudgeFallback:
         (seen,) = judge.system_prompts
         assert seen is not None
         assert "SAVE40" in seen
+
+    async def test_the_primary_judges_failure_is_what_gets_reported(
+        self, tmp_path: Path
+    ) -> None:
+        """When the whole chain fails, the primary's reason is the useful one.
+
+        A live run recorded the fallback's quota error for 41 cases while the
+        actual cause was the primary's billing failure, which took a direct API
+        call to discover. The fallback failing is a consequence of the primary
+        failing; reporting it instead hides why anything fell through.
+        """
+        path = _bench(tmp_path, [{"attack_id": ATTACK, "verdict": "held"}])
+
+        class Failing:
+            def __init__(self, name: str, reason: str) -> None:
+                self.name = name
+                self.model = "stub"
+                self._reason = reason
+
+            async def analyze(self, attack, response, system_prompt=None):  # type: ignore[no-untyped-def]
+                return AnalyzerVerdict(
+                    analyzer_name=self.name, success=False, confidence_score=0.0,
+                    reasoning=self._reason,
+                )
+
+        report = await run_benchmark(
+            load_benchmark(path),
+            judges=[
+                Failing("claude_analyzer", "credit balance is too low"),
+                Failing("gemini_analyzer", "429 quota exhausted"),
+            ],
+        )
+
+        (result,) = report.results
+        assert result.predicted == "not_ai_judged"
+        assert "credit balance" in str(result.judge_reasoning)

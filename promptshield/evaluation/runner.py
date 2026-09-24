@@ -152,7 +152,7 @@ async def _judge_case(
     response and which a different provider may well answer.
     """
     attempts = attempts if attempts is not None else {}
-    last: AnalyzerVerdict | None = None
+    first_failure: AnalyzerVerdict | None = None
     for index, judge in enumerate(judges):
         name = getattr(judge, "name", f"judge{index}")
         attempts[name] = attempts.get(name, 0) + 1
@@ -162,8 +162,13 @@ async def _judge_case(
             continue
         if verdict.confidence_score > 0.0:
             return verdict, False
-        last = verdict
-    return last, True
+        # Keep the *first* failure, not the last. When the whole chain fails the
+        # primary's reason is the one worth reporting: a fallback's quota error
+        # is a consequence of the primary having failed, and recording it
+        # instead hides why anything fell through at all.
+        if first_failure is None:
+            first_failure = verdict
+    return first_failure, True
 
 
 async def run_benchmark(

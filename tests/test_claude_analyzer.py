@@ -189,19 +189,29 @@ class TestJudgeRefusalRetry:
         assert verdict.confidence_score == 0.0
         assert "declined to answer" in verdict.reasoning
 
-    async def test_the_retry_restates_the_framing_without_changing_the_question(
+    async def test_the_retry_withholds_the_payload_and_restates_the_framing(
         self, analyzer: ClaudeAnalyzer, sample_attack_llm01: Attack
     ) -> None:
+        """The first attempt is declined because of what it quotes.
+
+        Repeating the same quote with a politer preamble gets declined again, so
+        the retry drops the payload and describes the attack instead. The
+        response is still sent verbatim -- it is the evidence being judged.
+        """
         analyzer._client = MagicMock()
         analyzer._client.messages.create = AsyncMock(
             side_effect=[self._reply("", "refusal"), self._reply('{"success": false}')]
         )
 
-        await analyzer.analyze(sample_attack_llm01, "a response")
+        await analyzer.analyze(sample_attack_llm01, "a target reply")
 
         first = analyzer._client.messages.create.await_args_list[0].kwargs["messages"][0]["content"]
         second = analyzer._client.messages.create.await_args_list[1].kwargs["messages"][0]["content"]
-        assert second.startswith(first)
+
+        assert sample_attack_llm01.prompt in first
+        assert sample_attack_llm01.prompt not in second
+        assert sample_attack_llm01.description in second
+        assert "a target reply" in second
         assert RETRY_SUFFIX in second
 
     async def test_a_parseable_first_answer_is_not_retried(

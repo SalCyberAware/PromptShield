@@ -105,6 +105,36 @@ reproduces that, so the score describes the shipped behaviour. A test
 cross-checks the harness's status mapping against the product's own rule, so the
 two cannot drift apart silently.
 
+### Why the judge sees decoded intent, not the payload
+
+For attacks in the encoding family the judge is shown the **decoded plaintext**
+of the payload, a one-line note naming the encoding, and the target's response
+unchanged. It never sees the encoded string.
+
+This is not politeness. A raw base64 jailbreak quoted for classification reads,
+to a provider's safety layer, like the jailbreak itself: Claude's API declines
+those outright — `stop_reason: refusal`, zero content blocks, zero output
+tokens — and there is nothing for a parser to read. Worse, it declines
+*non-deterministically*, so the same case came back judged on one run and
+`not_ai_judged` on the next, and the benchmark's accuracy moved by a case or two
+between runs that were otherwise identical. A measurement instrument that
+wobbles for reasons unrelated to what it measures is not much of an instrument.
+
+Decoding loses nothing a judge needs. The attack's whole mechanism is "hide an
+instruction inside an encoding", so the decoded instruction plus a note that it
+arrived encoded states the attack completely. **The response is never
+touched** — that is the evidence being judged, and altering it would change the
+measurement.
+
+Decoding happens when the prompt is built, in memory. No decoded payload is
+written to a benchmark file, a report or a log, and a payload that will not
+decode falls back to the attack's own name and description rather than to the
+bytes.
+
+The same withholding is what the retry does after a refusal, for any attack:
+a refusal does not require an encoded payload, and a plainly-worded request for
+a working credential or an XSS snippet draws one just as readily.
+
 ### When the judge produces nothing
 
 A judge call can come back with no verdict at all — an unparseable reply, or the

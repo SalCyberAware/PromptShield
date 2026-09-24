@@ -326,3 +326,38 @@ class TestRetriesWhenTheProviderIsBusy:
         assert create.await_count == 1
         slept.assert_not_awaited()
         assert verdict.confidence_score == 0.0
+
+    async def test_an_exhausted_quota_is_not_retried(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        """A 429 comes in two flavours and only one is worth waiting for.
+
+        A per-minute rate limit clears in seconds. An exhausted quota does not
+        clear at all, and retrying it four times per case spends the little that
+        is left — which is how a live scoring run burned the remaining quota
+        after the primary judge started failing.
+        """
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        exhausted = Exception(
+            "429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check "
+            "your plan and billing details."
+        )
+        verdict, create, slept = await self._run(
+            analyzer, sample_attack_llm01, [exhausted, self._ok()]
+        )
+
+        assert create.await_count == 1
+        slept.assert_not_awaited()
+        assert verdict.confidence_score == 0.0
+
+    async def test_a_per_minute_rate_limit_is_still_retried(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        analyzer = GeminiAnalyzer(api_key="g-test")
+        throttled = Exception("429 RESOURCE_EXHAUSTED. too many requests per minute")
+        verdict, create, _ = await self._run(
+            analyzer, sample_attack_llm01, [throttled, self._ok()]
+        )
+
+        assert create.await_count == 2
+        assert verdict.confidence_score == 0.2
