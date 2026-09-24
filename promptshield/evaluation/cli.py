@@ -22,7 +22,7 @@ from .review import (
     queue_summary,
     review_queue,
 )
-from .runner import JUDGES, run_benchmark_sync
+from .runner import JUDGES, JudgeUnavailableError, run_benchmark_sync
 
 console = Console()
 
@@ -141,9 +141,17 @@ def evaluate_run(
         )
         raise SystemExit(0)
 
-    report = run_benchmark_sync(
-        benchmark, judge_name=judge_name, include_unreviewed=include_unreviewed
-    )
+    try:
+        report = run_benchmark_sync(
+            benchmark, judge_name=judge_name, include_unreviewed=include_unreviewed
+        )
+    except JudgeUnavailableError as exc:
+        console.print(f"[red]Run stopped: {exc}[/red]")
+        console.print(
+            "No score is reported. A run the primary judge could not finish would "
+            "describe a different measurement for every case it missed."
+        )
+        raise SystemExit(2) from exc
 
     if as_json:
         click.echo(

@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from promptshield.analyzers.verdict_json import extract_verdict
+from promptshield.analyzers.verdict_json import (
+    MIN_REPORTED_CONFIDENCE,
+    extract_verdict,
+    reported_confidence,
+)
 
 
 class TestCleanReplies:
@@ -70,3 +74,26 @@ class TestNothingToParse:
 
     def test_a_json_array_is_not_a_verdict(self) -> None:
         assert extract_verdict("[1, 2, 3]") is None
+
+
+class TestTheZeroConfidenceSentinel:
+    """0.0 means "this analyzer produced nothing", not "certainly not vulnerable".
+
+    A live scoring run lost 26 correct verdicts to this. A prompt rule ending
+    "whatever its confidence" invited the judge to answer 0.0 on a clean refusal,
+    and every one of those parsed verdicts was then read as an analyzer failure
+    and thrown away — the cases came back not_ai_judged with the judge's own
+    correct reasoning attached to them.
+    """
+
+    def test_a_parsed_verdict_is_never_left_on_the_sentinel(self) -> None:
+        assert reported_confidence(0.0) == MIN_REPORTED_CONFIDENCE
+        assert reported_confidence(0.0) > 0.0
+
+    def test_an_ordinary_confidence_is_untouched(self) -> None:
+        assert reported_confidence(0.95) == 0.95
+        assert reported_confidence(0.2) == 0.2
+
+    def test_out_of_range_values_are_clamped(self) -> None:
+        assert reported_confidence(1.7) == 1.0
+        assert reported_confidence(-3.0) == MIN_REPORTED_CONFIDENCE

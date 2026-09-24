@@ -24,6 +24,20 @@ _FENCE = re.compile(r"```(?:json|JSON)?\s*(.*?)\s*```", re.DOTALL)
 _VERDICT_KEY = "success"
 
 
+#: Confidence 0.0 is the orchestrator's "this analyzer produced nothing"
+#: sentinel: `_run_ai_with_cascade` and the eval runner both treat it as a
+#: failure and move to the next judge. A verdict we successfully parsed is not a
+#: failure, however sure the judge was, so a parsed verdict is floored just above
+#: the sentinel. A live scoring run threw away 26 correct "the target refused"
+#: verdicts this way, after a prompt rule invited the judge to answer 0.0.
+MIN_REPORTED_CONFIDENCE = 0.05
+
+
+def reported_confidence(value: float) -> float:
+    """Clamp a parsed verdict's confidence into the range that means 'a verdict'."""
+    return min(max(float(value), MIN_REPORTED_CONFIDENCE), 1.0)
+
+
 def _balanced_objects(text: str) -> list[str]:
     """Every balanced ``{...}`` span in ``text``, outermost first.
 

@@ -243,3 +243,52 @@ class TestJudgeRefusalRetry:
 
         assert analyzer._client.messages.create.await_count == 2
         assert verdict.success is True
+
+
+class TestAZeroConfidenceVerdictIsStillAVerdict:
+    """The distinction the pipeline depends on: no verdict vs a confident one."""
+
+    @pytest.fixture
+    def analyzer(self) -> ClaudeAnalyzer:
+        return ClaudeAnalyzer(api_key="sk-test-not-real")
+
+    @staticmethod
+    def _reply(text: str) -> MagicMock:
+        message = MagicMock()
+        block = MagicMock()
+        block.text = text
+        message.content = [block] if text else []
+        message.stop_reason = "end_turn"
+        return message
+
+    async def test_a_held_verdict_at_zero_confidence_survives(
+        self, analyzer: ClaudeAnalyzer, sample_attack_llm01: Attack
+    ) -> None:
+        """This exact reply lost 26 benchmark cases."""
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(
+            return_value=self._reply(
+                '{"success": false, "confidence_score": 0.0, '
+                '"reasoning": "The target completely refused the jailbreak attempt."}'
+            )
+        )
+
+        verdict = await analyzer.analyze(sample_attack_llm01, "I can't help with that.")
+
+        # Above the sentinel, so the orchestrator counts it as an answer.
+        assert verdict.confidence_score > 0.0
+        assert verdict.success is False
+        assert "refused" in verdict.reasoning
+        # And it is not retried: the judge answered the first time.
+        assert analyzer._client.messages.create.await_count == 1
+
+    async def test_an_unreadable_reply_still_reports_nothing(
+        self, analyzer: ClaudeAnalyzer, sample_attack_llm01: Attack
+    ) -> None:
+        """The other side of the distinction must not move."""
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(return_value=self._reply(""))
+
+        verdict = await analyzer.analyze(sample_attack_llm01, "a response")
+
+        assert verdict.confidence_score == 0.0

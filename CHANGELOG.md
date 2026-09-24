@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A judge's verdict is no longer mistaken for a judge's failure.** Confidence `0.0` is the orchestrator's "this analyzer produced nothing" sentinel, and a new prompt rule ending "whatever its confidence" invited the judge to answer `0.0` on a clean refusal. Every one of those parsed verdicts was then read as an analyzer failure and discarded: a live run lost **26 correct "the target refused" verdicts**, each returned as `not_ai_judged` with the judge's own accurate reasoning attached. A verdict we successfully parsed is not a failure however sure the judge was, so a parsed verdict is now floored just above the sentinel, and the prompt says outright that `0.0` is reserved.
+- **A scoring run stops when its primary judge cannot be used at all.** Credit, quota or credential failures now abort rather than falling through to the fallback for the remainder. One run covered 41 cases with the fallback after the primary's credit ran out, exhausted the fallback's quota doing it, and reported an accuracy of 0.717 that described two different measurements at once.
+
 - **An exhausted Gemini quota is no longer retried.** A 429 comes in two flavours: a per-minute rate limit clears in seconds and is worth waiting for, while an exhausted quota or unpaid plan does not clear at all. Retrying the second kind four times per case is how a live scoring run spent the remainder of its quota once the primary judge began failing.
 - **A failed judge chain now reports the primary's failure, not the fallback's.** That run recorded Gemini's quota error against 41 cases while the actual cause was the primary judge's billing failure — which took a direct API call to discover. A fallback failing is a consequence of the primary failing; recording it instead hides why anything fell through.
 

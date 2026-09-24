@@ -14,6 +14,7 @@ accuracy numbers are only comparable when you know what produced them.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -27,6 +28,27 @@ from ..models import AnalyzerVerdict, Attack, Confidence
 from .benchmark import Benchmark, BenchmarkCase
 from .metrics import RunMetrics, score
 from .prompts import resolve_prompt
+
+
+class JudgeUnavailableError(RuntimeError):
+    """The primary judge cannot be used at all: credit, quota or credentials.
+
+    Raised instead of falling through to the fallback. A scoring run whose
+    primary judge is unpayable cannot produce a comparable number however many
+    cases the fallback covers, and asking it to try spends a second provider's
+    quota to produce a figure nobody can use -- which is exactly what happened
+    once: 41 cases covered by a fallback that then hit its own limit, and an
+    accuracy of 0.717 that meant nothing.
+    """
+
+
+#: A provider failure that no amount of retrying or falling through will fix.
+_UNRECOVERABLE = re.compile(
+    r"credit balance|billing|insufficient[_ ]quota|exceeded your current quota|"
+    r"authentication|invalid[_ ]?api[_ ]?key|unauthorized|permission denied",
+    re.I,
+)
+
 
 #: Judge name -> factory. Kept a registry so `--judge` can name one and so a
 #: test can substitute a stub without patching import machinery.
@@ -162,6 +184,13 @@ async def _judge_case(
             continue
         if verdict.confidence_score > 0.0:
             return verdict, False
+        if index == 0 and _UNRECOVERABLE.search(str(verdict.reasoning or "")):
+            # Stop the whole run rather than quietly re-scoring the remainder
+            # with a different judge, which would leave one number describing
+            # two different measurements.
+            raise JudgeUnavailableError(
+                f"{name} cannot be used: {str(verdict.reasoning or '').strip()[:200]}"
+            )
         # Keep the *first* failure, not the last. When the whole chain fails the
         # primary's reason is the one worth reporting: a fallback's quota error
         # is a consequence of the primary having failed, and recording it

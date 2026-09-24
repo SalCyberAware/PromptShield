@@ -12,7 +12,11 @@ import pytest
 from eval_helpers import ExplodingJudge, StubJudge, write_benchmark
 
 from promptshield.evaluation.benchmark import load_benchmark
-from promptshield.evaluation.runner import run_benchmark, status_for_verdicts
+from promptshield.evaluation.runner import (
+    JudgeUnavailableError,
+    run_benchmark,
+    status_for_verdicts,
+)
 from promptshield.models import AnalyzerVerdict, Confidence
 
 # A real attack id, so the runner resolves it against the shipped library.
@@ -379,6 +383,9 @@ class TestJudgeFallback:
         actual cause was the primary's billing failure, which took a direct API
         call to discover. The fallback failing is a consequence of the primary
         failing; reporting it instead hides why anything fell through.
+
+        A billing failure now aborts the run outright, so this uses a recoverable
+        primary failure -- a refusal -- to exercise the same reporting path.
         """
         path = _bench(tmp_path, [{"attack_id": ATTACK, "verdict": "held"}])
 
@@ -397,11 +404,65 @@ class TestJudgeFallback:
         report = await run_benchmark(
             load_benchmark(path),
             judges=[
-                Failing("claude_analyzer", "credit balance is too low"),
-                Failing("gemini_analyzer", "429 quota exhausted"),
+                Failing("claude_analyzer", "Judge declined to answer, twice"),
+                Failing("gemini_analyzer", "503 UNAVAILABLE after four attempts"),
             ],
         )
 
         (result,) = report.results
         assert result.predicted == "not_ai_judged"
-        assert "credit balance" in str(result.judge_reasoning)
+        assert "declined to answer" in str(result.judge_reasoning)
+
+    async def test_an_unusable_primary_stops_the_run(self, tmp_path: Path) -> None:
+        """Falling through would produce one number describing two measurements.
+
+        When the primary judge's credit ran out mid-run, the fallback covered 41
+        cases and then hit its own quota. The reported accuracy was 0.717 and
+        meant nothing. Stopping is the honest outcome.
+        """
+        path = _bench(
+            tmp_path,
+            [
+                {"id": "BM-0001", "attack_id": ATTACK, "verdict": "held"},
+                {"id": "BM-0002", "attack_id": OTHER, "verdict": "held"},
+            ],
+        )
+
+        class Unpayable:
+            name = "claude_analyzer"
+            model = "claude-sonnet-4-6"
+
+            async def analyze(self, attack, response, system_prompt=None):  # type: ignore[no-untyped-def]
+                return AnalyzerVerdict(
+                    analyzer_name=self.name, success=False, confidence_score=0.0,
+                    reasoning="Analyzer error: 400 - Your credit balance is too low",
+                )
+
+        fallback = StubJudge({}, name="gemini_analyzer")
+        with pytest.raises(JudgeUnavailableError, match="credit balance"):
+            await run_benchmark(load_benchmark(path), judges=[Unpayable(), fallback])
+
+        # The fallback is never asked, so no second provider's quota is spent.
+        assert fallback.calls == []
+
+    async def test_an_ordinary_judge_outage_still_falls_through(
+        self, tmp_path: Path
+    ) -> None:
+        """Only unrecoverable failures abort; a refusal or a 503 does not."""
+        path = _bench(tmp_path, [{"attack_id": ATTACK, "verdict": "held"}])
+
+        class Refuser:
+            name = "claude_analyzer"
+            model = "claude-sonnet-4-6"
+
+            async def analyze(self, attack, response, system_prompt=None):  # type: ignore[no-untyped-def]
+                return AnalyzerVerdict(
+                    analyzer_name=self.name, success=False, confidence_score=0.0,
+                    reasoning="Judge declined to answer",
+                )
+
+        fallback = StubJudge({ATTACK: (False, 0.9)}, name="gemini_analyzer")
+        report = await run_benchmark(load_benchmark(path), judges=[Refuser(), fallback])
+
+        assert report.results[0].predicted == "held"
+        assert fallback.calls == [ATTACK]
