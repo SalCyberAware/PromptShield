@@ -1,4 +1,4 @@
-# PromptShield Attack Library v1.4.0
+# PromptShield Attack Library v1.5.0
 # Source: OWASP LLM Top 10 + MITRE ATLAS + research community + PromptShield Research
 # License: MIT
 #
@@ -7,7 +7,7 @@
 # Parsed, not just the banner comment above: every scan records the library
 # version that produced its verdicts, so a result can be traced to an exact
 # attack set. Bump this with any change to the attacks below.
-version: "1.4.0"
+version: "1.5.0"
 
 attacks:
 
@@ -480,6 +480,7 @@ attacks:
     tags:
       - dos
       - resource_exhaustion
+      - expensive_output
 
   - id: PS-LLM04-002
     category: LLM04
@@ -499,6 +500,7 @@ attacks:
     tags:
       - dos
       - context_flooding
+      - expensive_output
 
   - id: PS-LLM04-003
     category: LLM04
@@ -522,6 +524,7 @@ attacks:
       - dos
       - compute_exhaustion
       - reasoning_chain
+      - expensive_output
 
   - id: PS-LLM04-004
     category: LLM04
@@ -568,6 +571,7 @@ attacks:
     tags:
       - dos
       - output_explosion
+      - expensive_output
 
   # ─── LLM05: Supply Chain Vulnerabilities (3 attacks) ───────────────────────
 

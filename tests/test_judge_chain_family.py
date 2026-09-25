@@ -20,6 +20,7 @@ from promptshield.analyzers import (
     openai_analyzer,
 )
 from promptshield.analyzers.attack_presentation import (
+    EXPENSIVE_OUTPUT_TAG,
     RESOURCE_CONSUMPTION_SUCCESS,
     success_indicators,
 )
@@ -50,18 +51,27 @@ class TestTheResourceConsumptionLine:
             prompt = analyzer._build_user_prompt(attack, case.response)
             assert f"- {RESOURCE_CONSUMPTION_SUCCESS}" in prompt, type(analyzer).__name__
 
-    @pytest.mark.parametrize(
-        "attack_id", sorted(i for i, a in LIBRARY.items() if a.category.value == "LLM04")
-    )
-    def test_every_llm04_attack_leads_with_it(self, attack_id: str) -> None:
-        first = success_indicators(LIBRARY[attack_id]).splitlines()[0]
+    def test_ps_llm04_001_presents_it(self) -> None:
+        first = success_indicators(LIBRARY["PS-LLM04-001"]).splitlines()[0]
         assert first == f"- {RESOURCE_CONSUMPTION_SUCCESS}"
 
-    @pytest.mark.parametrize(
-        "attack_id", sorted(i for i, a in LIBRARY.items() if a.category.value != "LLM04")
-    )
-    def test_no_other_attack_presents_it(self, attack_id: str) -> None:
-        assert RESOURCE_CONSUMPTION_SUCCESS not in success_indicators(LIBRARY[attack_id])
+    def test_the_unicode_bomb_does_not(self) -> None:
+        """A parsing attack: its harm is a failure, not the resources spent (BM-0074)."""
+        attack = LIBRARY["PS-LLM04-004"]
+        assert attack.category.value == "LLM04"
+        assert RESOURCE_CONSUMPTION_SUCCESS not in success_indicators(attack)
+        for analyzer in _analyzers():
+            assert RESOURCE_CONSUMPTION_SUCCESS not in analyzer._build_user_prompt(attack, "ok")
+
+    def test_exactly_the_four_compute_attacks_carry_the_tag(self) -> None:
+        tagged = sorted(i for i, a in LIBRARY.items() if EXPENSIVE_OUTPUT_TAG in a.tags)
+        assert tagged == ["PS-LLM04-001", "PS-LLM04-002", "PS-LLM04-003", "PS-LLM04-005"]
+
+    @pytest.mark.parametrize("attack_id", sorted(LIBRARY))
+    def test_only_tagged_attacks_present_it(self, attack_id: str) -> None:
+        attack = LIBRARY[attack_id]
+        presents = RESOURCE_CONSUMPTION_SUCCESS in success_indicators(attack)
+        assert presents == (EXPENSIVE_OUTPUT_TAG in attack.tags)
 
 
 class TestWhatCountsAsOpenAIFamily:

@@ -1,46 +1,47 @@
 {
-  "accuracy": 0.9671052631578947,
-  "correct": 147,
+  "accuracy": 1.0,
+  "correct": 152,
   "total": 152,
   "per_class": {
     "vulnerable": {
-      "precision": 0.9545454545454546,
+      "precision": 1.0,
       "recall": 1.0,
-      "support": 21
+      "support": 22
     },
     "held": {
       "precision": 1.0,
-      "recall": 0.968503937007874,
-      "support": 127
+      "recall": 1.0,
+      "support": 126
     },
     "needs_review": {
-      "precision": 0.75,
-      "recall": 0.75,
+      "precision": 1.0,
+      "recall": 1.0,
       "support": 4
     }
   },
   "provenance": {
-    "promptshield_version": "0.5.0",
+    "promptshield_version": "0.6.0",
     "benchmark_version": "1.0.0",
-    "attack_library_version": "1.3.0",
+    "attack_library_version": "1.5.0",
     "judge": "claude_analyzer",
     "judge_model": "claude-sonnet-4-6",
     "cases_scored": 152,
     "judge_chain": [
       "claude_analyzer",
-      "gemini_analyzer"
+      "gemini_analyzer",
+      "openai_analyzer"
     ],
     "judges_answered": {
-      "claude_analyzer": 147,
-      "gemini_analyzer": 2,
-      "none": 3
+      "claude_analyzer": 151,
+      "openai_analyzer": 1
     },
     "judges_called": {
       "claude_analyzer": 152,
-      "gemini_analyzer": 5
+      "gemini_analyzer": 1,
+      "openai_analyzer": 1
     },
     "included_unreviewed": false,
-    "recorded_at": "2026-09-24T00:42:47.893394+00:00"
+    "recorded_at": "2026-09-25T04:34:15.161521+00:00"
   },
-  "recorded_at": "2026-09-24T00:42:47.899267+00:00"
+  "recorded_at": "2026-09-25T04:34:15.169747+00:00"
 }
