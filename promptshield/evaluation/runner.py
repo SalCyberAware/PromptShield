@@ -119,6 +119,12 @@ class CaseResult:
     judge_reasoning: str | None
     judge_confidence: float | None
     judge_errored: bool
+    #: What the judge actually said -- success, failed or uncertain -- so a
+    #: disagreement is read from the judge's answer, never inferred back from
+    #: the status the pipeline turned it into. ``None`` when no judge answered.
+    judge_verdict: str | None = None
+    #: Which judge answered: the primary, or a fallback it fell through to.
+    judge_name: str | None = None
 
     @property
     def agrees(self) -> bool:
@@ -246,13 +252,11 @@ async def run_benchmark(
                 "the benchmark and the attack library are out of sync"
             )
 
-        verdicts = [pattern.analyze(attack, case.response)]
+        # Floor and judge see the same system prompt, as they do in the product.
+        system_prompt = resolve_prompt(str(case.source.get("prompt") or ""))
+        verdicts = [pattern.analyze(attack, case.response, system_prompt)]
         judge_verdict, errored = await _judge_case(
-            chain,
-            attack,
-            case.response,
-            resolve_prompt(str(case.source.get("prompt") or "")),
-            attempts,
+            chain, attack, case.response, system_prompt, attempts
         )
         if judge_verdict is not None and not errored:
             verdicts.append(judge_verdict)
@@ -276,6 +280,12 @@ async def run_benchmark(
                     judge_verdict.confidence_score if judge_verdict else None
                 ),
                 judge_errored=errored,
+                judge_verdict=(
+                    judge_verdict.verdict.value
+                    if judge_verdict is not None and not errored and judge_verdict.verdict
+                    else None
+                ),
+                judge_name=None if errored else name,
             )
         )
 

@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 
 import click
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
@@ -15,11 +14,13 @@ from rich.table import Table
 from . import __version__
 from .attacks.library import AttackLibrary
 from .engines.api_scanner import APIProvider, APIScanner, detect_provider
+from .env import load_env_files
 from .models import Attack, AttackCategory, AuthType, Scan, Severity, TargetConfig, TargetType
 from .reporters.html_reporter import HTMLReporter
 from .reporters.json_reporter import JSONReporter
 
-load_dotenv()
+# backend/.env as well as the root one -- see promptshield/env.py.
+load_env_files()
 
 # Rich writes box drawing, arrows and em dashes straight to the stream, and on
 # Windows a redirected stdout defaults to the legacy code page -- so

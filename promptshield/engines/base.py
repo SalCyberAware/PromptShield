@@ -187,9 +187,13 @@ class BaseScanner(ABC):
 
                     if response and not response.startswith(("[ERROR]", "[TIMEOUT]")):
                         verdicts: list[AnalyzerVerdict] = []
+                        # Only the system-prompt scanner has one; an API scan
+                        # attacks someone else's endpoint and cannot see what it
+                        # was configured with.
+                        target_prompt = getattr(self, "system_prompt", None)
 
                         # Pattern analyzer always runs (fast, free)
-                        pattern_verdict = pattern_analyzer.analyze(attack, response)
+                        pattern_verdict = pattern_analyzer.analyze(attack, response, target_prompt)
                         verdicts.append(pattern_verdict)
                         analyzers_run_for_attack.append("pattern_analyzer")
 
@@ -203,10 +207,7 @@ class BaseScanner(ABC):
                                 ai_cascade,
                                 attack,
                                 response,
-                                # Only the system-prompt scanner has one; an API
-                                # scan attacks someone else's endpoint and cannot
-                                # see what it was configured with.
-                                getattr(self, "system_prompt", None),
+                                target_prompt,
                             )
                             if ai_verdict is not None:
                                 verdicts.append(ai_verdict)

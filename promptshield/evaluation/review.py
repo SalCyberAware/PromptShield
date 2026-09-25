@@ -47,8 +47,23 @@ class ReviewError(ValueError):
     """A decision that cannot be recorded, with a reviewer-facing message."""
 
 
-def review_queue(benchmark: Benchmark) -> tuple[BenchmarkCase, ...]:
-    """The unreviewed cases, in the order they should be shown."""
+def review_queue(
+    benchmark: Benchmark, only: list[str] | None = None
+) -> tuple[BenchmarkCase, ...]:
+    """The cases to show, in the order they should be shown.
+
+    By default, the unreviewed cases, vulnerable first. With ``only``, exactly
+    those case ids in the order given, whether or not they were reviewed
+    already -- the way to re-open a label without hand-editing the file. An id
+    that is not in the benchmark is an error rather than silently skipped.
+    """
+    if only:
+        by_id = {case.id: case for case in benchmark.cases}
+        missing = [case_id for case_id in only if case_id not in by_id]
+        if missing:
+            raise ReviewError(f"not in this benchmark: {', '.join(missing)}")
+        return tuple(by_id[case_id] for case_id in dict.fromkeys(only))
+
     order = {verdict: index for index, verdict in enumerate(REVIEW_ORDER)}
     return tuple(
         sorted(
@@ -81,12 +96,19 @@ def default_reviewer() -> str:
     return os.getenv("USER") or os.getenv("USERNAME") or "unknown"
 
 
-def _stamp(reviewer: str, action: str, now: datetime | None = None) -> dict[str, Any]:
-    return {
+def _stamp(
+    case: BenchmarkCase, reviewer: str, action: str, now: datetime | None = None
+) -> dict[str, Any]:
+    stamp: dict[str, Any] = {
         "action": action,
         "reviewer": reviewer,
         "reviewed_at": (now or datetime.now(UTC)).isoformat(),
     }
+    # A re-opened case keeps the decision it replaces: nothing a reviewer
+    # overrides is deleted, including an earlier review.
+    if case.review:
+        stamp["previous_review"] = dict(case.review)
+    return stamp
 
 
 def confirm_case(
@@ -101,7 +123,7 @@ def confirm_case(
     return replace(
         case,
         review_status="REVIEWED",
-        review=_stamp(reviewer, "confirmed", now),
+        review=_stamp(case, reviewer, "confirmed", now),
     )
 
 
@@ -126,7 +148,7 @@ def change_case(
             f"reading later (got {len(cleaned)})"
         )
 
-    stamp = _stamp(reviewer, "changed", now)
+    stamp = _stamp(case, reviewer, "changed", now)
     stamp["previous_verdict"] = case.verdict
     stamp["superseded_rationale"] = case.rationale
     return replace(

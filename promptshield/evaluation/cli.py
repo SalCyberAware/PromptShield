@@ -1,7 +1,9 @@
 """``promptshield eval`` — run the verdict benchmark and report the score."""
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..env import load_env_files
+from ..models import Attack, AttackCategory, Severity
 from .baseline import BaselineError, compare_to_baseline, load_baseline, write_baseline
 from .benchmark import BenchmarkCase, dump_benchmark, load_benchmark
 from .prompts import resolve_prompt
@@ -22,7 +26,7 @@ from .review import (
     queue_summary,
     review_queue,
 )
-from .runner import JUDGES, JudgeUnavailableError, run_benchmark_sync
+from .runner import JUDGE_FALLBACKS, JUDGES, JudgeUnavailableError, run_benchmark_sync
 
 console = Console()
 
@@ -69,7 +73,13 @@ def _print_report(report: Any, show_agreements: bool) -> None:
         console.print(
             Panel(
                 f"[bold]labeled[/bold]   [green]{case.verdict}[/green]"
-                f"    [bold]judged[/bold] [red]{result.predicted}[/red]"
+                f"    [bold]predicted[/bold] [red]{result.predicted}[/red]"
+                + (
+                    f"    [bold]judge said[/bold] {result.judge_verdict}"
+                    f" [dim]({result.judge_name})[/dim]"
+                    if result.judge_verdict
+                    else "    [bold]judge said[/bold] nothing"
+                )
                 + (
                     f"    [dim]confidence {result.judge_confidence:.2f}[/dim]"
                     if result.judge_confidence is not None
@@ -88,6 +98,19 @@ def _print_report(report: Any, show_agreements: bool) -> None:
                 console.print(
                     f"[green]✓[/green] {result.case.id} {result.case.verdict}"
                 )
+
+
+def _case_json(result: Any) -> dict[str, Any]:
+    return {
+        "case_id": result.case.id,
+        "attack_id": result.case.attack_id,
+        "labeled": result.case.verdict,
+        "predicted": result.predicted,
+        "judge": result.judge_name,
+        "judge_verdict": result.judge_verdict,
+        "judge_confidence": result.judge_confidence,
+        "judge_errored": result.judge_errored,
+    }
 
 
 @click.group()
@@ -173,15 +196,14 @@ def evaluate_run(
                         for entry in report.metrics.per_class
                     ],
                     "confusion": report.metrics.confusion,
+                    # Every case, with what the judge itself said, so a
+                    # disagreement never has to be inferred from the status.
+                    "cases": [_case_json(result) for result in report.results],
                     "disagreements": [
                         {
-                            "case_id": result.case.id,
-                            "attack_id": result.case.attack_id,
-                            "labeled": result.case.verdict,
-                            "predicted": result.predicted,
+                            **_case_json(result),
                             "human_rationale": result.case.rationale,
                             "judge_reasoning": result.judge_reasoning,
-                            "judge_confidence": result.judge_confidence,
                         }
                         for result in report.disagreements
                     ],
@@ -206,6 +228,74 @@ def evaluate_run(
         console.print("\n" + verdict.message)
         if not verdict.passed:
             raise SystemExit(1)
+
+
+def _scrub(text: str) -> str:
+    """Remove any configured key value from ``text`` before it is printed."""
+    for name, value in os.environ.items():
+        if value and len(value) >= 8 and ("KEY" in name or "TOKEN" in name):
+            text = text.replace(value, "***")
+    return text
+
+
+@evaluate.command("preflight")
+@click.option(
+    "--judge", "judge_name", default="claude",
+    type=click.Choice(sorted(JUDGES)),
+    help="The primary judge whose chain to check.",
+)
+def evaluate_preflight(judge_name: str) -> None:
+    """Check each judge in the chain can be paid for, before a billed run.
+
+    One minimal real call per judge -- the same ``analyze`` path a scoring run
+    uses, on a harmless question -- so a run does not discover an unfunded key
+    or a missing fallback halfway through. Reports which fallbacks are not
+    configured at all, which is what hid a missing Gemini key from a whole live
+    run. Key values are never printed.
+    """
+    probe = Attack(
+        id="PREFLIGHT",
+        category=AttackCategory.CUSTOM,
+        owasp_category="CUSTOM",
+        name="Pre-flight probe",
+        description="Asks a harmless arithmetic question.",
+        severity=Severity.INFO,
+        prompt="What is 2 + 2?",
+        remediation="None needed.",
+    )
+    loaded = load_env_files()
+    console.print(
+        "env files: " + (", ".join(str(path) for path in loaded) or "[yellow]none found[/yellow]")
+    )
+
+    primary_ok = False
+    for index, name in enumerate((judge_name, *JUDGE_FALLBACKS.get(judge_name, ()))):
+        role = "primary" if index == 0 else "fallback"
+        try:
+            judge = JUDGES[name]()
+        except (ValueError, ImportError) as exc:
+            console.print(f"[yellow]{role} {name}: not configured[/yellow] — {_scrub(str(exc))}")
+            continue
+        model = getattr(judge, "model", None)
+        try:
+            verdict = asyncio.run(judge.analyze(probe, "4."))
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
+            console.print(f"[red]{role} {name} ({model}): failed[/red] — {_scrub(str(exc))[:200]}")
+            continue
+        if verdict.confidence_score > 0.0:
+            console.print(
+                f"[green]{role} {name} ({model}): answered[/green] — "
+                f"verdict {verdict.verdict.value if verdict.verdict else '?'}"
+            )
+            primary_ok = primary_ok or index == 0
+        else:
+            console.print(
+                f"[red]{role} {name} ({model}): no verdict[/red] — "
+                f"{_scrub(verdict.reasoning or '')[:200]}"
+            )
+
+    if not primary_ok:
+        raise SystemExit(2)
 
 
 @evaluate.command("cases")
@@ -313,7 +403,14 @@ def _show_case(
     "--reviewer", default=None,
     help="Recorded against each decision. Defaults to your git user.name.",
 )
-def evaluate_review(benchmark_path: Path | None, reviewer: str | None) -> None:
+@click.option(
+    "--only", "only", multiple=True, metavar="CASE_ID",
+    help="Review just these cases, in this order, re-opening them even if already "
+         "REVIEWED. Repeat the option or pass a comma-separated list.",
+)
+def evaluate_review(
+    benchmark_path: Path | None, reviewer: str | None, only: tuple[str, ...]
+) -> None:
     """Review unreviewed cases one at a time, confirming or correcting each label.
 
     Vulnerable cases come first: they are the smallest class, they are what
@@ -328,7 +425,11 @@ def evaluate_review(benchmark_path: Path | None, reviewer: str | None) -> None:
         raise SystemExit("benchmark has no path on disk to save to")
 
     who = reviewer or default_reviewer()
-    queue = review_queue(benchmark)
+    case_ids = [part.strip() for value in only for part in value.split(",") if part.strip()]
+    try:
+        queue = review_queue(benchmark, only=case_ids or None)
+    except ReviewError as exc:
+        raise click.UsageError(str(exc)) from exc
     if not queue:
         console.print(
             f"[green]Nothing to review.[/green] All {len(benchmark)} case(s) in "
@@ -337,8 +438,8 @@ def evaluate_review(benchmark_path: Path | None, reviewer: str | None) -> None:
         return
 
     console.print(
-        f"[bold]{len(queue)}[/bold] unreviewed case(s) · reviewing as [cyan]{who}[/cyan] · "
-        f"saving to {path}\n"
+        f"[bold]{len(queue)}[/bold] {'selected' if case_ids else 'unreviewed'} case(s) · "
+        f"reviewing as [cyan]{who}[/cyan] · saving to {path}\n"
     )
 
     decided = 0
