@@ -18,6 +18,7 @@ from ..models import (
     Attack,
     Confidence,
     Finding,
+    JudgeVerdict,
     Scan,
     ScanProvenance,
     ScanStatus,
@@ -37,13 +38,30 @@ _JUDGE_OVERRIDE_CONFIDENCE = 0.95
 _PATTERN_ANALYZER_NAME = "pattern_analyzer"
 
 
+#: The score a finding carries when a judge said ``uncertain``. That judge's own
+#: confidence is how sure it is that the evidence is unsettled, not how likely
+#: the attack is to have succeeded, so it is not reused as one.
+_UNCERTAIN_SCORE = 0.5
+
+
 def _combine_verdicts(verdicts: list[AnalyzerVerdict]) -> tuple[bool, float, Confidence, bool]:
     """Combine multiple analyzer verdicts using confidence-weighted voting.
 
     Returns: (overall_success, confidence_score, confidence_level, needs_manual_review)
+
+    ``overall_success`` means "this produces a finding"; a finding flagged for
+    review is ``needs_review``. Confidence sets the band a finding is shown
+    with, never whether it needs review: that comes only from an ``uncertain``
+    verdict or from analyzers that disagree.
     """
     if not verdicts:
         return False, 0.0, Confidence.LOW, True
+
+    # A judge that says the evidence does not settle it is asking for a person,
+    # whatever the floor found. A floor hit does not settle what the judge could
+    # not, and a floor miss is weak evidence the other way.
+    if any(v.verdict == JudgeVerdict.UNCERTAIN for v in verdicts):
+        return True, _UNCERTAIN_SCORE, Confidence.LOW, True
 
     success_verdicts = [v for v in verdicts if v.success]
     fail_verdicts = [v for v in verdicts if not v.success]
@@ -57,7 +75,7 @@ def _combine_verdicts(verdicts: list[AnalyzerVerdict]) -> tuple[bool, float, Con
             return True, boosted, Confidence.HIGH, False
         if boosted >= 0.7:
             return True, boosted, Confidence.MEDIUM, False
-        return True, boosted, Confidence.LOW, True
+        return True, boosted, Confidence.LOW, False
 
     # Disagreement: at least one says success, at least one says fail
     if success_verdicts and fail_verdicts:

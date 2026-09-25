@@ -11,13 +11,17 @@ from typing import Any
 
 import yaml
 
-from promptshield.models import AnalyzerVerdict
+from promptshield.models import AnalyzerVerdict, JudgeVerdict
 
 
 class StubJudge:
-    """A judge whose verdict per attack id is decided by the test."""
+    """A judge whose verdict per attack id is decided by the test.
 
-    def __init__(self, verdicts: dict[str, tuple[bool, float]], name: str = "stub_judge",
+    Each verdict is ``(outcome, confidence)``, where outcome is a bool (the
+    legacy success/failed form) or a three-way label such as ``"uncertain"``.
+    """
+
+    def __init__(self, verdicts: dict[str, tuple[bool | str, float]], name: str = "stub_judge",
                  model: str | None = "stub-model-v1") -> None:
         self._verdicts = verdicts
         self.name = name
@@ -31,10 +35,15 @@ class StubJudge:
     ) -> AnalyzerVerdict:
         self.calls.append(attack.id)
         self.system_prompts.append(system_prompt)
-        success, confidence = self._verdicts.get(attack.id, (False, 0.9))
+        outcome, confidence = self._verdicts.get(attack.id, (False, 0.9))
+        if isinstance(outcome, str):
+            verdict = JudgeVerdict(outcome)
+        else:
+            verdict = JudgeVerdict.SUCCESS if outcome else JudgeVerdict.FAILED
         return AnalyzerVerdict(
             analyzer_name=self.name,
-            success=success,
+            success=verdict == JudgeVerdict.SUCCESS,
+            verdict=verdict,
             confidence_score=confidence,
             reasoning=f"stub verdict for {attack.id}",
         )

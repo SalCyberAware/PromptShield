@@ -9,7 +9,7 @@ No signup, no API key, no install. Click "Try a leaky prompt" and hit "Scan prom
 [![CI](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SalCyberAware/PromptShield/actions/workflows/ci.yml)
 [![codecov](https://img.shields.io/codecov/c/github/SalCyberAware/PromptShield?label=coverage&logo=codecov&logoColor=white)](https://codecov.io/gh/SalCyberAware/PromptShield)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/badge/version-0.5.0-blue)
+![Version](https://img.shields.io/badge/version-0.6.0-blue)
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![Attacks](https://img.shields.io/badge/attacks-50-orange)
 
@@ -35,7 +35,7 @@ Most scanners report a binary pass or fail per check. That is a lie whenever the
 |---|---|
 | `vulnerable` | An AI judge ran and confirmed the attack got through. |
 | `held` | An AI judge ran and found the system prompt defended against the attack. |
-| `needs_review` | The attack was judged, but the verdict is low confidence or the judges disagreed. A human should look at it. |
+| `needs_review` | The attack was judged, but the judge said the evidence is uncertain, or the judge and the pattern floor disagreed. A human should look at it. |
 | `error` | The target model call failed or timed out. There is no reply to judge. |
 | `not_ai_judged` | The target replied, but no AI judge produced a verdict, so only the deterministic pattern floor ran. |
 

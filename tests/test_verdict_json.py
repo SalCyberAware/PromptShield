@@ -6,8 +6,11 @@ import pytest
 from promptshield.analyzers.verdict_json import (
     MIN_REPORTED_CONFIDENCE,
     extract_verdict,
+    read_reply,
+    read_verdict,
     reported_confidence,
 )
+from promptshield.models import JudgeVerdict
 
 
 class TestCleanReplies:
@@ -97,3 +100,69 @@ class TestTheZeroConfidenceSentinel:
     def test_out_of_range_values_are_clamped(self) -> None:
         assert reported_confidence(1.7) == 1.0
         assert reported_confidence(-3.0) == MIN_REPORTED_CONFIDENCE
+
+
+class TestTheThreeWayContract:
+    """``{"verdict", "confidence", "reasoning"}``, with the old boolean shape read too."""
+
+    @pytest.mark.parametrize("label", ["success", "failed", "uncertain"])
+    def test_each_label_is_read(self, label: str) -> None:
+        reading = read_verdict({"verdict": label, "confidence": 0.8, "reasoning": "why"})
+        assert reading is not None
+        assert reading.verdict == JudgeVerdict(label)
+        assert reading.confidence == 0.8
+        assert reading.reasoning == "why"
+
+    def test_a_label_is_read_case_insensitively(self) -> None:
+        reading = read_verdict({"verdict": " Uncertain ", "confidence": 0.6})
+        assert reading is not None
+        assert reading.verdict == JudgeVerdict.UNCERTAIN
+
+    def test_an_unknown_label_is_no_verdict(self) -> None:
+        """Not guessed at: "partial" is not one of the three, so nothing to score."""
+        assert read_verdict({"verdict": "partial", "confidence": 0.6}) is None
+
+    @pytest.mark.parametrize(
+        ("success", "expected"),
+        [(True, JudgeVerdict.SUCCESS), (False, JudgeVerdict.FAILED), ("false", JudgeVerdict.FAILED)],
+    )
+    def test_the_old_boolean_shape_maps_to_success_or_failed(
+        self, success: object, expected: JudgeVerdict
+    ) -> None:
+        reading = read_verdict({"success": success, "confidence_score": 0.7})
+        assert reading is not None
+        assert reading.verdict == expected
+        assert reading.confidence == 0.7
+
+    def test_the_old_shape_never_becomes_uncertain(self) -> None:
+        """A legacy low-confidence success is a success: confidence is not a verdict."""
+        reading = read_verdict({"success": True, "confidence_score": 0.3})
+        assert reading is not None
+        assert reading.verdict == JudgeVerdict.SUCCESS
+
+    def test_confidence_is_floored_at_the_contract_minimum(self) -> None:
+        reading = read_verdict({"verdict": "failed", "confidence": 0.0})
+        assert reading is not None
+        assert reading.confidence == MIN_REPORTED_CONFIDENCE == 0.05
+
+    def test_a_missing_or_garbled_confidence_reads_as_even(self) -> None:
+        for data in ({"verdict": "failed"}, {"verdict": "failed", "confidence": "high"}):
+            reading = read_verdict(data)
+            assert reading is not None
+            assert reading.confidence == 0.5
+
+    def test_an_object_without_either_key_is_no_verdict(self) -> None:
+        assert read_verdict({"reasoning": "hmm"}) is None
+
+    def test_the_new_shape_is_picked_out_of_several_objects(self) -> None:
+        reply = 'Quoted: {"role": "admin"}\n{"verdict": "uncertain", "confidence": 0.6}'
+        reading = read_reply(reply)
+        assert reading is not None
+        assert reading.verdict == JudgeVerdict.UNCERTAIN
+
+    def test_an_uncertain_reading_is_not_a_success(self) -> None:
+        reading = read_verdict({"verdict": "uncertain", "confidence": 0.9})
+        assert reading is not None
+        verdict = reading.to_analyzer_verdict("claude_analyzer", "raw")
+        assert verdict.verdict == JudgeVerdict.UNCERTAIN
+        assert verdict.success is False

@@ -9,19 +9,30 @@ first inner ``}`` and failed to parse.
 
 One extractor, used by all four, so a reply that one analyzer can read is not
 mysteriously unreadable to another.
+
+The contract is ``{"verdict": "success" | "failed" | "uncertain", "confidence",
+"reasoning"}``. The older ``{"success": bool, "confidence_score"}`` shape is
+still read, as success or failed, so recorded replies and test fixtures written
+against it keep meaning what they meant.
 """
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
+
+from ..models import AnalyzerVerdict, JudgeVerdict
 
 #: A fenced block anywhere in the reply, not only wrapping the whole of it.
 _FENCE = re.compile(r"```(?:json|JSON)?\s*(.*?)\s*```", re.DOTALL)
 
-#: The key every verdict object has. Used to pick the right candidate when a
-#: reply contains more than one JSON object.
-_VERDICT_KEY = "success"
+#: Keys that mark an object as a verdict, current contract first. Used to pick
+#: the right candidate when a reply contains more than one JSON object.
+_VERDICT_KEYS = ("verdict", "success")
+
+#: What a verdict that omits its confidence is read as.
+_DEFAULT_CONFIDENCE = 0.5
 
 
 #: Confidence 0.0 is the orchestrator's "this analyzer produced nothing"
@@ -115,7 +126,73 @@ def extract_verdict(reply: str) -> dict[str, Any] | None:
         return None
     # Prefer an object that actually looks like a verdict; a reply may include
     # some other object (an echoed payload, an example) before the real one.
-    for obj in parsed:
-        if _VERDICT_KEY in obj:
-            return obj
+    for key in _VERDICT_KEYS:
+        for obj in parsed:
+            if key in obj:
+                return obj
     return parsed[0]
+
+
+@dataclass(frozen=True)
+class JudgeReading:
+    """A verdict object read into the three-way contract."""
+
+    verdict: JudgeVerdict
+    confidence: float
+    reasoning: str
+
+    def to_analyzer_verdict(self, analyzer_name: str, raw_response: str) -> AnalyzerVerdict:
+        return AnalyzerVerdict(
+            analyzer_name=analyzer_name,
+            success=self.verdict == JudgeVerdict.SUCCESS,
+            verdict=self.verdict,
+            confidence_score=self.confidence,
+            reasoning=self.reasoning,
+            raw_response=raw_response[:500],
+        )
+
+
+def _as_bool(value: Any) -> bool:
+    # bool("false") is True; a model that quotes its boolean still means false.
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def read_verdict(data: dict[str, Any]) -> JudgeReading | None:
+    """Read a verdict object, current shape or legacy boolean shape.
+
+    ``None`` when the object carries no verdict, or a ``verdict`` label outside
+    the contract: a label we do not recognise is not one we can score, so it is
+    treated like no answer rather than guessed at.
+    """
+    if "verdict" in data:
+        try:
+            verdict = JudgeVerdict(str(data["verdict"]).strip().lower())
+        except ValueError:
+            return None
+        raw_confidence = data.get("confidence", data.get("confidence_score"))
+    elif "success" in data:
+        verdict = JudgeVerdict.SUCCESS if _as_bool(data["success"]) else JudgeVerdict.FAILED
+        raw_confidence = data.get("confidence_score", data.get("confidence"))
+    else:
+        return None
+
+    try:
+        confidence = reported_confidence(
+            _DEFAULT_CONFIDENCE if raw_confidence is None else float(raw_confidence)
+        )
+    except (TypeError, ValueError):
+        confidence = _DEFAULT_CONFIDENCE
+
+    return JudgeReading(
+        verdict=verdict,
+        confidence=confidence,
+        reasoning=str(data.get("reasoning", "No reasoning provided")),
+    )
+
+
+def read_reply(reply: str) -> JudgeReading | None:
+    """Extract and read the verdict in a model reply; ``None`` if there is none."""
+    data = extract_verdict(reply)
+    return None if data is None else read_verdict(data)

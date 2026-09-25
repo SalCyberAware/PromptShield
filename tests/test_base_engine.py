@@ -16,6 +16,7 @@ from promptshield.models import (
     Attack,
     AuthType,
     Confidence,
+    JudgeVerdict,
     ScanStatus,
     TargetConfig,
     TargetType,
@@ -118,16 +119,22 @@ class TestCombineVerdictsAllAgreeSuccess:
         assert review is False
         assert score == pytest.approx(0.75)
 
-    def test_low_scores_yield_low_confidence_with_review(self) -> None:
+    def test_low_scores_yield_low_confidence_without_review(self) -> None:
+        """Confidence sets the band, never the review flag.
+
+        Below 0.7 used to mean "needs review", which made a judge's confidence
+        stand in for a verdict it had not given. Uncertainty is now a verdict
+        of its own; two analyzers that agree the attack succeeded report it.
+        """
         verdicts = [
             AnalyzerVerdict(analyzer_name="a1", success=True, confidence_score=0.4),
             AnalyzerVerdict(analyzer_name="a2", success=True, confidence_score=0.5),
         ]
         success, score, conf, review = _combine_verdicts(verdicts)
         assert success is True
-        # avg=0.45 -> boosted=0.55 -> < 0.7 -> LOW with review
+        # avg=0.45 -> boosted=0.55 -> < 0.7 -> LOW band, still no review
         assert conf == Confidence.LOW
-        assert review is True
+        assert review is False
 
 
 class TestCombineVerdictsDisagreement:
@@ -1121,3 +1128,52 @@ class TestJudgeOverridesASilentFloor:
         assert needs_review is True
         assert confidence == Confidence.LOW
         assert score == pytest.approx(0.99 * 0.6)
+
+
+class TestAnUncertainJudgeGoesToReview:
+    """``uncertain`` resolves to needs_review directly, whatever the floor says."""
+
+    @staticmethod
+    def _floor(success: bool) -> AnalyzerVerdict:
+        return AnalyzerVerdict(
+            analyzer_name="pattern_analyzer", success=success, confidence_score=0.8
+        )
+
+    @staticmethod
+    def _uncertain(confidence: float) -> AnalyzerVerdict:
+        return AnalyzerVerdict(
+            analyzer_name="claude_analyzer",
+            success=False,
+            verdict=JudgeVerdict.UNCERTAIN,
+            confidence_score=confidence,
+        )
+
+    @pytest.mark.parametrize("floor_hit", [True, False])
+    def test_uncertain_is_needs_review_regardless_of_the_floor(self, floor_hit: bool) -> None:
+        success, score, confidence, needs_review = _combine_verdicts(
+            [self._floor(floor_hit), self._uncertain(0.9)]
+        )
+        assert success is True
+        assert needs_review is True
+        assert confidence == Confidence.LOW
+        assert score == pytest.approx(0.5)
+
+    def test_a_very_sure_uncertain_is_not_the_override(self) -> None:
+        """Rule 7: confidence in "uncertain" is not confidence the attack worked.
+
+        The >= 0.95 override is for a judge certain of *success*. A judge
+        certain the evidence is unsettled must not reach it.
+        """
+        _, _, _, needs_review = _combine_verdicts([self._floor(False), self._uncertain(0.99)])
+        assert needs_review is True
+
+    def test_success_and_failed_keep_their_rules(self) -> None:
+        judge_success = AnalyzerVerdict(
+            analyzer_name="claude_analyzer", success=True, confidence_score=0.95
+        )
+        judge_failed = AnalyzerVerdict(
+            analyzer_name="claude_analyzer", success=False, confidence_score=0.99
+        )
+        assert _combine_verdicts([self._floor(False), judge_success])[3] is False
+        assert _combine_verdicts([self._floor(True), judge_failed])[3] is True
+        assert _combine_verdicts([self._floor(False), judge_failed])[0] is False

@@ -24,7 +24,7 @@ from .. import __version__, model_config
 from ..analyzers.pattern import PatternAnalyzer
 from ..attacks.library import AttackLibrary
 from ..engines.base import _combine_verdicts
-from ..models import AnalyzerVerdict, Attack, Confidence
+from ..models import AnalyzerVerdict, Attack
 from .benchmark import Benchmark, BenchmarkCase
 from .metrics import RunMetrics, score
 from .prompts import resolve_prompt
@@ -100,14 +100,14 @@ def status_for_verdicts(verdicts: list[AnalyzerVerdict]) -> str:
     """Map combined analyzer verdicts to a product status.
 
     Mirrors ``backend/scan.py::_project_attack``: a judged attack that produced
-    a finding is ``vulnerable`` unless the combination flagged it for review or
-    landed at LOW confidence, in which case it is ``needs_review``; no finding
-    means ``held``.
+    a finding is ``vulnerable`` unless the combination flagged it for review,
+    in which case it is ``needs_review``; no finding means ``held``. The
+    confidence band plays no part.
     """
-    success, _score, confidence, needs_manual_review = _combine_verdicts(verdicts)
+    success, _score, _confidence, needs_manual_review = _combine_verdicts(verdicts)
     if not success:
         return "held"
-    if needs_manual_review or confidence == Confidence.LOW:
+    if needs_manual_review:
         return "needs_review"
     return "vulnerable"
 

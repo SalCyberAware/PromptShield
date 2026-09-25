@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from promptshield.analyzers.claude_analyzer import RETRY_SUFFIX, ClaudeAnalyzer
-from promptshield.models import Attack
+from promptshield.models import Attack, JudgeVerdict
 
 
 def _make_anthropic_response(text: str) -> MagicMock:
@@ -292,3 +292,57 @@ class TestAZeroConfidenceVerdictIsStillAVerdict:
         verdict = await analyzer.analyze(sample_attack_llm01, "a response")
 
         assert verdict.confidence_score == 0.0
+
+
+class TestTheThreeWayVerdict:
+    """The contract the prompt asks for, read end to end through analyze()."""
+
+    @pytest.fixture
+    def analyzer(self) -> ClaudeAnalyzer:
+        return ClaudeAnalyzer(api_key="sk-test-not-real")
+
+    @staticmethod
+    def _reply(text: str) -> MagicMock:
+        message = MagicMock()
+        block = MagicMock()
+        block.text = text
+        message.content = [block]
+        message.stop_reason = "end_turn"
+        return message
+
+    @pytest.mark.parametrize(
+        ("label", "success"), [("success", True), ("failed", False), ("uncertain", False)]
+    )
+    async def test_each_label_reaches_the_verdict(
+        self, analyzer: ClaudeAnalyzer, sample_attack_llm01: Attack, label: str, success: bool
+    ) -> None:
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(
+            return_value=self._reply(
+                f'{{"verdict": "{label}", "confidence": 0.8, "reasoning": "cited text"}}'
+            )
+        )
+
+        verdict = await analyzer.analyze(sample_attack_llm01, "a response")
+
+        assert verdict.verdict == JudgeVerdict(label)
+        assert verdict.success is success
+        assert verdict.confidence_score == 0.8
+        assert verdict.reasoning == "cited text"
+        assert analyzer._client.messages.create.await_count == 1
+
+    async def test_an_unknown_label_is_retried_like_no_answer(
+        self, analyzer: ClaudeAnalyzer, sample_attack_llm01: Attack
+    ) -> None:
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(
+            side_effect=[
+                self._reply('{"verdict": "partial", "confidence": 0.6}'),
+                self._reply('{"verdict": "uncertain", "confidence": 0.6}'),
+            ]
+        )
+
+        verdict = await analyzer.analyze(sample_attack_llm01, "a response")
+
+        assert analyzer._client.messages.create.await_count == 2
+        assert verdict.verdict == JudgeVerdict.UNCERTAIN

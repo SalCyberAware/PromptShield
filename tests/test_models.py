@@ -10,6 +10,7 @@ from promptshield.models import (
     AuthType,
     Confidence,
     Finding,
+    JudgeVerdict,
     Severity,
     TargetConfig,
     TargetType,
@@ -81,6 +82,38 @@ class TestAnalyzerVerdict:
                 analyzer_name="test",
                 success=True,
                 confidence_score=1.5,
+            )
+
+    @pytest.mark.parametrize(
+        ("success", "expected"), [(True, JudgeVerdict.SUCCESS), (False, JudgeVerdict.FAILED)]
+    )
+    def test_the_three_way_verdict_is_derived_from_success_when_omitted(
+        self, success: bool, expected: JudgeVerdict
+    ) -> None:
+        """The pattern floor and older fixtures set only the boolean."""
+        verdict = AnalyzerVerdict(analyzer_name="t", success=success, confidence_score=0.5)
+        assert verdict.verdict == expected
+
+    def test_uncertain_keeps_the_boolean_false(self) -> None:
+        verdict = AnalyzerVerdict(
+            analyzer_name="t",
+            success=False,
+            verdict=JudgeVerdict.UNCERTAIN,
+            confidence_score=0.5,
+        )
+        assert verdict.verdict == JudgeVerdict.UNCERTAIN
+        assert verdict.success is False
+
+    @pytest.mark.parametrize(
+        ("success", "verdict"),
+        [(True, JudgeVerdict.UNCERTAIN), (True, JudgeVerdict.FAILED), (False, JudgeVerdict.SUCCESS)],
+    )
+    def test_a_boolean_that_contradicts_the_verdict_is_rejected(
+        self, success: bool, verdict: JudgeVerdict
+    ) -> None:
+        with pytest.raises(ValidationError):
+            AnalyzerVerdict(
+                analyzer_name="t", success=success, verdict=verdict, confidence_score=0.5
             )
 
 

@@ -3,9 +3,21 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
+
+
+class JudgeVerdict(str, Enum):
+    """What one analyzer concluded about one attack.
+
+    ``uncertain`` is the judge saying the evidence does not settle it, which is
+    a verdict in its own right and not a low-confidence ``success``.
+    """
+
+    SUCCESS = "success"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
 
 
 class Severity(str, Enum):
@@ -105,6 +117,20 @@ class AnalyzerVerdict(BaseModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     reasoning: str | None = None
     raw_response: str | None = None
+    #: The three-way verdict. ``success`` is kept for compatibility and is true
+    #: only for ``JudgeVerdict.SUCCESS``; a caller that sets only ``success``
+    #: (the pattern floor, older fixtures) gets success or failed derived from it.
+    verdict: JudgeVerdict | None = None
+
+    @model_validator(mode="after")
+    def _verdict_agrees_with_success(self) -> "AnalyzerVerdict":
+        if self.verdict is None:
+            self.verdict = JudgeVerdict.SUCCESS if self.success else JudgeVerdict.FAILED
+        elif self.success != (self.verdict == JudgeVerdict.SUCCESS):
+            raise ValueError(
+                f"success={self.success} contradicts verdict={self.verdict.value!r}"
+            )
+        return self
 
 
 class Finding(BaseModel):
