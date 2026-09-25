@@ -50,6 +50,7 @@ Pinning status, and why each is what it is
 from __future__ import annotations
 
 import os
+import re
 
 # ── Target: the model the visitor's system prompt is actually run on ──────────
 TARGET_MODEL = "gpt-4o-mini-2024-07-18"
@@ -71,6 +72,38 @@ GEMINI_JUDGE_MODEL_ENV = "PROMPTSHIELD_ANALYZER_GEMINI_MODEL"
 
 OLLAMA_JUDGE_MODEL = "llama3.2:3b"
 OLLAMA_JUDGE_MODEL_ENV = "PROMPTSHIELD_ANALYZER_OLLAMA_MODEL"
+
+
+#: OpenAI's own model ids: the GPT line (including open-weight ``gpt-oss``),
+#: ``chatgpt-*``, the ``o``-series reasoning models, and the legacy completion
+#: names. Matched after any ``provider/`` prefix, case-insensitively.
+_OPENAI_FAMILY = re.compile(r"^(?:gpt-|chatgpt-|o\d+(?:-|$)|text-|davinci|babbage)", re.I)
+
+#: The judge that must not score its own family's output.
+OPENAI_JUDGE_NAME = "openai_analyzer"
+
+
+def is_openai_family(model: str | None) -> bool:
+    """Whether ``model`` is an OpenAI model.
+
+    An unknown target counts as OpenAI. The product's own target is OpenAI by
+    default, and when it cannot be told apart, excluding a judge costs a
+    fallback while including one risks exactly the bias the rule exists for.
+    """
+    if not model or not model.strip():
+        return True
+    return bool(_OPENAI_FAMILY.match(model.strip().rsplit("/", 1)[-1]))
+
+
+def judge_excluded_for_target(judge_name: str, target_model: str | None) -> bool:
+    """The same-family rule: OpenAI never judges an OpenAI target.
+
+    The web demo's target is OpenAI, so OpenAI was left out of its judges
+    entirely -- a model grading its own family's output carries that family's
+    blind spots. The rule is about the target, not about OpenAI: against a
+    target from another family, OpenAI is as independent as any other judge.
+    """
+    return judge_name == OPENAI_JUDGE_NAME and is_openai_family(target_model)
 
 
 def resolve(pinned: str, env_var: str) -> str:

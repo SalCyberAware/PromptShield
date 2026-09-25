@@ -76,9 +76,11 @@ def _openai_judge() -> Any:
 JUDGES.update(claude=_claude_judge, gemini=_gemini_judge, openai=_openai_judge)
 
 #: Fallback order per primary judge, mirroring the product's Claude -> Gemini
-#: chain. A judge that declines to answer is not evidence about the response, so
-#: the harness asks the next one rather than recording "unjudged".
-JUDGE_FALLBACKS: dict[str, tuple[str, ...]] = {"claude": ("gemini",)}
+#: -> OpenAI chain. A judge that declines to answer is not evidence about the
+#: response, so the harness asks the next one rather than recording "unjudged".
+#: OpenAI is skipped for any case whose target is OpenAI-family -- see
+#: ``model_config.judge_excluded_for_target``.
+JUDGE_FALLBACKS: dict[str, tuple[str, ...]] = {"claude": ("gemini", "openai")}
 
 
 def _judge_chain(judge_name: str) -> list[Any]:
@@ -169,6 +171,7 @@ async def _judge_case(
     response: str,
     system_prompt: str | None = None,
     attempts: dict[str, int] | None = None,
+    target_model: str | None = None,
 ) -> tuple[AnalyzerVerdict | None, bool]:
     """Walk the judge chain until one answers. Returns its verdict and whether all failed.
 
@@ -178,11 +181,18 @@ async def _judge_case(
     is a judge declining outright -- the API refusing to generate a verdict for a
     jailbreak payload quoted for classification -- which is not a property of the
     response and which a different provider may well answer.
+
+    ``target_model`` is the model that produced the response. A fallback judge
+    from the same family is skipped -- never asked, not counted as called --
+    exactly as the product leaves it out of the cascade. The primary is never
+    skipped: ``--judge openai`` is an explicit request to measure that judge.
     """
     attempts = attempts if attempts is not None else {}
     first_failure: AnalyzerVerdict | None = None
     for index, judge in enumerate(judges):
         name = getattr(judge, "name", f"judge{index}")
+        if index > 0 and model_config.judge_excluded_for_target(name, target_model):
+            continue
         attempts[name] = attempts.get(name, 0) + 1
         try:
             verdict = await judge.analyze(attack, response, system_prompt)
@@ -256,7 +266,12 @@ async def run_benchmark(
         system_prompt = resolve_prompt(str(case.source.get("prompt") or ""))
         verdicts = [pattern.analyze(attack, case.response, system_prompt)]
         judge_verdict, errored = await _judge_case(
-            chain, attack, case.response, system_prompt, attempts
+            chain,
+            attack,
+            case.response,
+            system_prompt,
+            attempts,
+            target_model=str(case.source.get("target_model") or "") or None,
         )
         if judge_verdict is not None and not errored:
             verdicts.append(judge_verdict)

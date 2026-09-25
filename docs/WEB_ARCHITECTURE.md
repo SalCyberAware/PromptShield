@@ -74,6 +74,10 @@ passed. Honest framing plus a CLI upsell.
   stronger judge than Haiku because verdict accuracy *is* demo credibility;
   cross-provider from the OpenAI target to avoid same-family bias; the cascade gives
   uptime resilience at ~one analyzer call per attack in the typical case.
+  OpenAI joins as a **third tier only when the target is outside the OpenAI family**
+  (`PROMPTSHIELD_TARGET_MODEL` set to, say, a llama model) — the same-family rule,
+  `model_config.judge_excluded_for_target`. With the default `gpt-4o-mini` target the
+  cascade stays Claude → Gemini. Ensemble mode never adds it.
 - **Model tier is CONFIGURABLE via env vars** (target + analyzer), defaulting
   conservative for the public demo. CLI / enterprise tier / deep audits flip to
   top-tier (Opus / flagship). The strength lives in the architecture; the public demo

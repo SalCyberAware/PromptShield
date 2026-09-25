@@ -57,13 +57,17 @@ _EXCERPT_STATUSES = ("vulnerable", "needs_review", "not_ai_judged")
 
 # ── Ensemble judging (slice 3c) ─────────────────────────────────────────────────
 # Off by default. When on, both cross-provider judges (Claude + Gemini) judge
-# every attack and their verdicts are aggregated. OpenAI is never a judge here;
-# it is the target, so it would carry same-family bias.
+# every attack and their verdicts are aggregated. OpenAI is never an ensemble
+# judge, and in the single-judge cascade it is only a last fallback against a
+# target outside its own family (``model_config.judge_excluded_for_target``).
 _ENSEMBLE_ENV = "PROMPTSHIELD_WEB_ENSEMBLE"
 _ENSEMBLE_TRUTHY = ("1", "true", "yes", "on")
 # An analyzer verdict at or below this confidence is the analyzers' internal-error
 # sentinel (auth, network, parse, 429); the same convention run_scan's cascade uses.
 _VERDICT_ERROR_FLOOR = 0.0
+# The ensemble's judges. The cascade's OpenAI fallback tier is not one of them:
+# thorough mode is two independent cross-provider opinions, not three.
+_ENSEMBLE_JUDGES = ("claude_analyzer", "gemini_analyzer")
 
 # ── Decision 1: the 13 web-demo attacks (explicit allowlist) ────────────────────
 # The full 50 stays in the CLI. Order here is the visitor-facing run order.
@@ -133,22 +137,30 @@ def load_web_demo_attacks() -> list[Attack]:
     return resolved
 
 
-def build_web_analyzers() -> list[Any]:
-    """Build Decision 2's trimmed cascade in priority order: [Claude Sonnet, Gemini Flash].
+def build_web_analyzers(target_model: str | None = None) -> list[Any]:
+    """Build Decision 2's cascade in priority order: Claude Sonnet, Gemini Flash, OpenAI.
 
     ``run_scan`` walks the list and keeps the first usable verdict, so order =
-    Claude (primary) → Gemini (fallback). An analyzer whose provider key/SDK is
-    absent (``ValueError``/``ImportError``) is skipped, degrading to the pattern
-    floor rather than failing the whole scan. This is deliberately **not** the
-    engine's default 4-tier cascade — no OpenAI, no Ollama.
+    Claude (primary) → Gemini → OpenAI. OpenAI is added only when the target
+    (``target_model``, else the deployment's) is outside the OpenAI family:
+    the same-family rule, ``model_config.judge_excluded_for_target``. With the
+    default ``gpt-4o-mini`` target the cascade is Claude → Gemini, as before.
+    An analyzer whose provider key/SDK is absent (``ValueError``/``ImportError``)
+    is skipped, degrading to the pattern floor rather than failing the whole
+    scan. No Ollama: that tier is the CLI's local fallback.
     """
+    from promptshield import model_config
     from promptshield.analyzers.claude_analyzer import ClaudeAnalyzer
     from promptshield.analyzers.gemini_analyzer import GeminiAnalyzer
+    from promptshield.analyzers.openai_analyzer import OpenAIAnalyzer
 
+    target = target_model or default_target_model()
     factories: tuple[Callable[[], Any], ...] = (
         lambda: ClaudeAnalyzer(model=analyzer_anthropic_model()),
         lambda: GeminiAnalyzer(),  # default model => Flash
     )
+    if not model_config.judge_excluded_for_target(model_config.OPENAI_JUDGE_NAME, target):
+        factories = (*factories, lambda: OpenAIAnalyzer())
 
     analyzers: list[Any] = []
     for make in factories:
@@ -193,6 +205,7 @@ async def run_web_scan(
         system_prompt=system_prompt,
         model=target_model,
     )
+    # build_web_analyzers resolves the same deployment target for the rule.
     analyzers = [] if web_ensemble_enabled() else build_web_analyzers()
     return await scanner.run_scan(
         scan_id=f"web-{uuid.uuid4().hex[:12]}",
@@ -235,7 +248,11 @@ async def run_ensemble_judging(scan: Scan) -> dict[str, list[dict[str, Any]]]:
     map to an empty list. Configured judges only: an unconfigured provider simply
     does not appear, degrading thorough mode to one judge or to the pattern floor.
     """
-    judges = build_web_analyzers()
+    judges = [
+        judge
+        for judge in build_web_analyzers()
+        if getattr(judge, "name", None) in _ENSEMBLE_JUDGES
+    ]
     attacks_by_id = {attack.id: attack for attack in load_web_demo_attacks()}
 
     verdicts: dict[str, list[dict[str, Any]]] = {}
