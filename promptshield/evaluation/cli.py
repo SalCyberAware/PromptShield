@@ -15,7 +15,13 @@ from rich.table import Table
 from ..env import load_env_files
 from ..models import Attack, AttackCategory, Severity
 from .baseline import BaselineError, compare_to_baseline, load_baseline, write_baseline
-from .benchmark import BenchmarkCase, dump_benchmark, load_benchmark
+from .benchmark import (
+    BenchmarkCase,
+    BenchmarkError,
+    dump_benchmark,
+    is_default_benchmark,
+    load_benchmark,
+)
 from .prompts import resolve_prompt
 from .review import (
     ReviewError,
@@ -153,6 +159,16 @@ def evaluate_run(
     should_write_baseline: bool,
 ) -> None:
     """Run every case through the analyzer pipeline and score the verdicts."""
+    gated = is_default_benchmark(benchmark_path)
+    if not gated and (check_baseline or should_write_baseline):
+        # Refused before a single judge call: the baseline describes the
+        # packaged benchmark, and a held-out file exists to be reported
+        # beside it, never to become (or be compared as) the gate.
+        raise click.UsageError(
+            f"--check-baseline and --write-baseline only apply to the packaged "
+            f"benchmark; {benchmark_path} is scored and reported, never recorded "
+            "as the gate."
+        )
     benchmark = load_benchmark(benchmark_path)
 
     scored = benchmark.cases if include_unreviewed else benchmark.reviewed()
@@ -180,6 +196,8 @@ def evaluate_run(
         click.echo(
             json.dumps(
                 {
+                    "benchmark_file": str(benchmark.path),
+                    "gated": gated,
                     "provenance": report.provenance,
                     "accuracy": report.metrics.accuracy,
                     "correct": report.metrics.correct,
@@ -213,6 +231,11 @@ def evaluate_run(
         )
     else:
         _print_report(report, show_agreements)
+        if not gated:
+            console.print(
+                f"\n[cyan]{benchmark.path}[/cyan] (v{benchmark.version}) is not the "
+                "packaged benchmark: reported only, never recorded as the baseline."
+            )
 
     if should_write_baseline:
         path = write_baseline(report)
@@ -244,7 +267,12 @@ def _scrub(text: str) -> str:
     type=click.Choice(sorted(JUDGES)),
     help="The primary judge whose chain to check.",
 )
-def evaluate_preflight(judge_name: str) -> None:
+@click.option(
+    "--benchmark", "benchmark_path", type=click.Path(path_type=Path),
+    help="Also check this benchmark file loads and every case resolves to its "
+         "system prompt (defaults to the packaged one).",
+)
+def evaluate_preflight(judge_name: str, benchmark_path: Path | None) -> None:
     """Check each judge in the chain can be paid for, before a billed run.
 
     One minimal real call per judge -- the same ``analyze`` path a scoring run
@@ -252,7 +280,30 @@ def evaluate_preflight(judge_name: str) -> None:
     or a missing fallback halfway through. Reports which fallbacks are not
     configured at all, which is what hid a missing Gemini key from a whole live
     run. Key values are never printed.
+
+    The benchmark is checked first, and costs nothing: a file that does not
+    parse, or a case whose prompt cannot be resolved (so the prompt-leak floor
+    would run blind), fails here rather than after the judge has been paid.
     """
+    try:
+        benchmark = load_benchmark(benchmark_path)
+    except BenchmarkError as exc:
+        console.print(f"[red]benchmark: {exc}[/red]")
+        raise SystemExit(2) from exc
+    unresolved = sorted(
+        {str(case.source.get("prompt") or "<none>") for case in benchmark.cases
+         if resolve_prompt(str(case.source.get("prompt") or "")) is None}
+    )
+    console.print(
+        f"benchmark: {benchmark.path} (v{benchmark.version}) · {len(benchmark)} case(s), "
+        f"{len(benchmark.reviewed())} reviewed · "
+        + ("gated by the baseline" if is_default_benchmark(benchmark_path)
+           else "held-out: reported, never gated")
+    )
+    if unresolved:
+        console.print(f"[red]benchmark: unknown prompt key(s) {', '.join(unresolved)}[/red]")
+        raise SystemExit(2)
+
     probe = Attack(
         id="PREFLIGHT",
         category=AttackCategory.CUSTOM,

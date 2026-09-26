@@ -271,3 +271,105 @@ class TestPreflight:
         monkeypatch.setitem(runner_module.JUDGE_FALLBACKS, "claude", ())
         result = CliRunner().invoke(eval_cli.evaluate, ["preflight", "--judge", "claude"])
         assert secret not in result.output
+
+
+def _flat(output: str) -> str:
+    """Console output with rich's line wrapping undone."""
+    return " ".join(output.split())
+
+
+class TestAHeldOutFileIsReportedNeverGated:
+    """A non-default benchmark is scored beside the main one, never as the gate."""
+
+    def _bench(self, tmp_path: Path) -> Path:
+        return write_benchmark(
+            tmp_path / "holdout.yaml",
+            [{"id": "HO-0001", "attack_id": ATTACK, "verdict": "held",
+              "source": {"prompt": "holdout"}}],
+            version="holdout-1.0.0",
+        )
+
+    @pytest.fixture(autouse=True)
+    def _no_baseline_io(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _forbidden(*_: object, **__: object) -> object:
+            raise AssertionError("the main baseline must not be touched")
+
+        monkeypatch.setattr(eval_cli, "write_baseline", _forbidden)
+        monkeypatch.setattr(eval_cli, "load_baseline", _forbidden)
+        monkeypatch.setattr(eval_cli, "load_env_files", lambda: [])
+
+    @pytest.mark.parametrize("flag", ["--check-baseline", "--write-baseline"])
+    def test_a_baseline_flag_is_refused_before_any_judge_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+    ) -> None:
+        judge = StubJudge({})
+        monkeypatch.setitem(runner_module.JUDGES, "claude", lambda: judge)
+        result = CliRunner().invoke(
+            eval_cli.evaluate,
+            ["run", "--benchmark", str(self._bench(tmp_path)), "--judge", "claude", flag],
+        )
+        assert result.exit_code == 2, result.output
+        assert "never recorded as the gate" in _flat(result.output)
+        assert judge.calls == []
+
+    def test_without_the_flags_it_is_scored_and_labelled_report_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(runner_module.JUDGES, "claude", lambda: StubJudge({}))
+        monkeypatch.setitem(runner_module.JUDGE_FALLBACKS, "claude", ())
+        runner = CliRunner()
+        path = self._bench(tmp_path)
+        result = runner.invoke(
+            eval_cli.evaluate, ["run", "--benchmark", str(path), "--judge", "claude"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "reported only" in _flat(result.output)
+        as_json = runner.invoke(
+            eval_cli.evaluate, ["run", "--benchmark", str(path), "--judge", "claude", "--json"]
+        )
+        assert json.loads(as_json.output)["gated"] is False
+
+    def test_naming_the_packaged_file_explicitly_still_counts_as_the_default(self) -> None:
+        from promptshield.evaluation.benchmark import (
+            DEFAULT_BENCHMARK_PATH,
+            is_default_benchmark,
+        )
+
+        assert is_default_benchmark(None)
+        assert is_default_benchmark(DEFAULT_BENCHMARK_PATH)
+        assert not is_default_benchmark(DEFAULT_BENCHMARK_PATH.with_name("holdout_v1.yaml"))
+
+    def test_cases_accepts_the_file(self, tmp_path: Path) -> None:
+        result = CliRunner().invoke(
+            eval_cli.evaluate, ["cases", "--benchmark", str(self._bench(tmp_path))]
+        )
+        assert result.exit_code == 0, result.output
+        assert "HO-0001" in result.output and "vholdout-1.0.0" in result.output
+
+    def test_preflight_checks_the_file_before_the_judge(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(runner_module.JUDGES, "claude", lambda: StubJudge({}))
+        monkeypatch.setitem(runner_module.JUDGE_FALLBACKS, "claude", ())
+        result = CliRunner().invoke(
+            eval_cli.evaluate,
+            ["preflight", "--judge", "claude", "--benchmark", str(self._bench(tmp_path))],
+        )
+        assert result.exit_code == 0, result.output
+        assert "held-out: reported, never gated" in _flat(result.output)
+
+    def test_preflight_fails_on_a_prompt_it_cannot_resolve(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judge = StubJudge({})
+        monkeypatch.setitem(runner_module.JUDGES, "claude", lambda: judge)
+        path = write_benchmark(
+            tmp_path / "b.yaml",
+            [{"attack_id": ATTACK, "verdict": "held", "source": {"prompt": "nowhere"}}],
+        )
+        result = CliRunner().invoke(
+            eval_cli.evaluate, ["preflight", "--judge", "claude", "--benchmark", str(path)]
+        )
+        assert result.exit_code == 2
+        assert "nowhere" in _flat(result.output)
+        assert judge.calls == []

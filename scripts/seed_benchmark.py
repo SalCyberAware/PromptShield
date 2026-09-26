@@ -17,7 +17,7 @@ Nothing it writes is ground truth. Every case lands as UNREVIEWED with
 ``proposed_by: machine``, and the runner refuses to score against those unless
 explicitly told to. A person reads each case and confirms or corrects the label.
 
-Cost scales with the attack set: attacks x 2 prompts target calls, and the same
+Cost scales with the attack set: attacks x prompts target calls, and the same
 number of judge calls. The judge is the half that bills; a local target is free.
 --dry-run prints the count and exits without calling anything.
 
@@ -38,6 +38,15 @@ it, and each case records its target model in ``source``, so cases captured from
 different targets stay distinguishable rather than blurring into one population.
 ``--skip-existing`` drops any (attack, prompt, target model) the file already
 holds, so widening the attack set does not pay to re-capture what is there.
+
+The held-out benchmark is a separate file seeded against the ``holdout`` prompt
+only, with its own id prefix and version so its cases can never be mistaken
+for main-benchmark ones:
+
+    python scripts/seed_benchmark.py --attacks all --prompts holdout \\
+        --id-prefix HO --benchmark-version holdout-1.0.0 \\
+        --output promptshield/evaluation/data/holdout_v1.yaml \\
+        --target-model qwen2.5:3b --target-base-url http://127.0.0.1:11434/v1
 """
 from __future__ import annotations
 
@@ -78,11 +87,14 @@ from promptshield.evaluation.benchmark import (  # noqa: E402
     dump_benchmark,
     load_benchmark,
 )
-from promptshield.evaluation.prompts import EXAMPLE_PROMPTS  # noqa: E402
+from promptshield.evaluation.prompts import EXAMPLE_PROMPTS, HOLDOUT_PROMPTS  # noqa: E402
 from promptshield.models import Attack, TargetConfig, TargetType  # noqa: E402
 
-#: The prompt each case was captured against, by the key stored in ``source``.
-PROMPTS = EXAMPLE_PROMPTS
+#: Every prompt --prompts can name, by the key stored in ``source``.
+PROMPTS = {**EXAMPLE_PROMPTS, **HOLDOUT_PROMPTS}
+
+#: What a seed uses unless told otherwise: the two examples, never the holdout.
+DEFAULT_PROMPTS = tuple(EXAMPLE_PROMPTS)
 
 
 #: An Ollama daemon's OpenAI-compatible endpoint, for --target-base-url.
@@ -119,7 +131,9 @@ def _candidate_verdict(vulnerable: bool, confidence: float) -> str:
     return "vulnerable"
 
 
-def _existing_cases(output: Path, append: bool, overwrite: bool) -> tuple[str, list[BenchmarkCase]]:
+def _existing_cases(
+    output: Path, append: bool, overwrite: bool, new_version: str
+) -> tuple[str, list[BenchmarkCase]]:
     """Resolve what the run starts from: the file's cases, or nothing.
 
     Seeding costs real calls and the file it writes holds captured responses that
@@ -128,7 +142,7 @@ def _existing_cases(output: Path, append: bool, overwrite: bool) -> tuple[str, l
     or --overwrite says discard it on purpose.
     """
     if not output.exists():
-        return "1.0.0", []
+        return new_version, []
 
     existing = load_benchmark(output)
     if append:
@@ -156,11 +170,11 @@ def _captured(cases: list[BenchmarkCase]) -> set[tuple[str, str, str]]:
     }
 
 
-def _next_case_number(cases: list[BenchmarkCase]) -> int:
-    """First free BM-NNNN number, so appended ids never collide with kept ones."""
+def _next_case_number(cases: list[BenchmarkCase], prefix: str) -> int:
+    """First free <prefix>-NNNN number, so appended ids never collide with kept ones."""
     highest = 0
     for case in cases:
-        _, _, digits = case.id.partition("BM-")
+        _, _, digits = case.id.partition(f"{prefix}-")
         if digits.isdigit():
             highest = max(highest, int(digits))
     return highest + 1
@@ -175,30 +189,34 @@ async def seed(
     overwrite: bool,
     attack_set: str,
     skip_existing: bool,
+    prompt_names: tuple[str, ...],
+    id_prefix: str,
+    new_version: str,
 ) -> int:
-    version, cases = _existing_cases(output, append, overwrite)
+    version, cases = _existing_cases(output, append, overwrite, new_version)
     kept = len(cases)
-    next_number = _next_case_number(cases)
+    next_number = _next_case_number(cases, id_prefix)
+    prompts = {name: PROMPTS[name] for name in prompt_names}
     already = _captured(cases) if skip_existing else set()
 
     attacks = resolve_attacks(attack_set)
-    judges = build_web_analyzers()
+    judges = build_web_analyzers(target_model)
     if not judges:
         print("No judge could be constructed — check the analyzer API keys.", file=sys.stderr)
         return 1
     judge = judges[0]
 
-    print(f"attacks: {len(attacks)} ({attack_set} set) x {len(PROMPTS)} prompts")
+    print(f"attacks: {len(attacks)} ({attack_set} set) x {len(prompts)} prompt(s): {', '.join(prompts)}")
     print(f"target: {target_model} via {target_base_url or 'api.openai.com'}")
     print(f"judge:  {getattr(judge, 'name', 'unknown')} ({getattr(judge, 'model', 'unknown')})")
     if kept:
-        print(f"keeping {kept} existing case(s); new ids start at BM-{next_number:04d}")
+        print(f"keeping {kept} existing case(s); new ids start at {id_prefix}-{next_number:04d}")
     print("")
 
     attempted = 0
     skipped_existing = 0
 
-    for prompt_name, system_prompt in PROMPTS.items():
+    for prompt_name, system_prompt in prompts.items():
         scanner = SystemPromptScanner(
             TargetConfig(
                 url=internal_target_url(target_model),
@@ -247,7 +265,7 @@ async def seed(
 
                 cases.append(
                     BenchmarkCase(
-                        id=f"BM-{next_number:04d}",
+                        id=f"{id_prefix}-{next_number:04d}",
                         attack_id=attack.id,
                         attack_name=attack.name,
                         attack_intent=attack.description,
@@ -270,7 +288,7 @@ async def seed(
                         source=source,
                     )
                 )
-                print(f"  BM-{next_number:04d} {attack.id} [{prompt_name}] -> candidate {candidate}")
+                print(f"  {id_prefix}-{next_number:04d} {attack.id} [{prompt_name}] -> candidate {candidate}")
                 next_number += 1
         finally:
             await scanner.cleanup()
@@ -309,22 +327,23 @@ def estimate(
     attack_set: str,
     output: Path,
     skip_existing: bool,
+    prompt_names: tuple[str, ...],
 ) -> None:
     """Print the cost estimate without calling anything."""
     attacks = resolve_attacks(attack_set)
-    calls = len(attacks) * len(PROMPTS)
+    calls = len(attacks) * len(prompt_names)
     if skip_existing and output.exists():
         already = _captured(list(load_benchmark(output).cases))
         planned = [
             (a.id, prompt)
-            for prompt in PROMPTS
+            for prompt in prompt_names
             for a in attacks
             if (a.id, prompt, target_model) not in already
         ]
         print(f"skipping {calls - len(planned)} already captured for {target_model}")
         calls = len(planned)
     where = target_base_url or "api.openai.com"
-    print(f"attacks: {len(attacks)} ({attack_set} set)  prompts: {len(PROMPTS)}")
+    print(f"attacks: {len(attacks)} ({attack_set} set)  prompts: {', '.join(prompt_names)}")
     print(f"target calls: {calls}  ({target_model} via {where})")
     print(f"judge calls:  {calls}  ({model_config.WEB_ANTHROPIC_JUDGE_MODEL})")
     print(f"attack library: v{web_demo_library_version()}")
@@ -352,6 +371,20 @@ def main() -> int:
         "--attacks", choices=ATTACK_SETS, default="web",
         help="Which attacks to fire: 'web' is the 13 the hosted demo serves, "
              "'all' is the whole library. Judge cost scales with the count.",
+    )
+    parser.add_argument(
+        "--prompts", default=",".join(DEFAULT_PROMPTS),
+        help="Comma-separated system prompts to attack, from: "
+             f"{', '.join(PROMPTS)}. Defaults to the two examples; 'holdout' is "
+             "for the held-out benchmark only.",
+    )
+    parser.add_argument(
+        "--id-prefix", default="BM",
+        help="Case id prefix, e.g. HO for the held-out benchmark.",
+    )
+    parser.add_argument(
+        "--benchmark-version", default="1.0.0",
+        help="Version written into a new output file. Ignored when appending.",
     )
     parser.add_argument(
         "--skip-existing", action="store_true",
@@ -385,11 +418,15 @@ def main() -> int:
         parser.error("--append and --overwrite ask for opposite things; pick one.")
 
     target_model = args.target_model or default_target_model()
+    prompt_names = tuple(name.strip() for name in args.prompts.split(",") if name.strip())
+    unknown = [name for name in prompt_names if name not in PROMPTS]
+    if unknown or not prompt_names:
+        parser.error(f"--prompts: unknown {unknown}; choose from {', '.join(PROMPTS)}")
 
     if args.dry_run:
         estimate(
             target_model, args.target_base_url, args.attacks, args.output,
-            args.skip_existing,
+            args.skip_existing, prompt_names,
         )
         return 0
     return asyncio.run(
@@ -402,6 +439,9 @@ def main() -> int:
             args.overwrite,
             args.attacks,
             args.skip_existing,
+            prompt_names,
+            args.id_prefix,
+            args.benchmark_version,
         )
     )
 

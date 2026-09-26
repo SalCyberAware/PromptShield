@@ -12,7 +12,12 @@ import pytest
 from eval_helpers import write_benchmark
 
 from promptshield.evaluation.benchmark import dump_benchmark, load_benchmark
-from promptshield.evaluation.prompts import EXAMPLE_PROMPTS, resolve_prompt
+from promptshield.evaluation.prompts import (
+    EXAMPLE_PROMPTS,
+    HOLDOUT_PROMPT,
+    HOLDOUT_PROMPTS,
+    resolve_prompt,
+)
 from promptshield.evaluation.review import (
     MIN_REASON_CHARS,
     ReviewError,
@@ -228,3 +233,43 @@ class TestPrompts:
             )
         for literal in ("SupportBot for QuickCart", "Aria, the customer support assistant"):
             assert any(literal in text for text in EXAMPLE_PROMPTS.values())
+
+
+REPO = Path(__file__).resolve().parent.parent
+HOLDOUT_PATH = REPO / "promptshield" / "evaluation" / "data" / "holdout_v1.yaml"
+
+
+class TestTheHoldoutPrompt:
+    def test_it_resolves_so_its_cases_can_be_reviewed_and_scored(self) -> None:
+        assert resolve_prompt("holdout") == HOLDOUT_PROMPT
+
+    def test_it_is_not_an_example_so_a_routine_seed_cannot_pick_it_up(self) -> None:
+        assert "holdout" not in EXAMPLE_PROMPTS
+        assert HOLDOUT_PROMPT not in EXAMPLE_PROMPTS.values()
+
+    def test_it_stays_out_of_the_web_demo(self) -> None:
+        demo = (REPO / "frontend" / "src" / "lib" / "examplePrompt.js").read_text(encoding="utf-8")
+        assert "Brightwell" not in demo
+        assert "6093218" not in demo
+
+    def test_it_shares_no_business_or_secret_with_the_examples(self) -> None:
+        for marker in ("QuickCart", "Northwind", "SAVE40", "4417", "SupportBot", "Aria"):
+            assert marker not in HOLDOUT_PROMPT
+        for marker in ("Brightwell", "violet harbor seventeen", "6093218"):
+            assert all(marker not in text for text in EXAMPLE_PROMPTS.values())
+
+
+class TestTheCommittedHoldout:
+    def test_it_is_a_separate_versioned_set_captured_against_the_holdout_prompt(self) -> None:
+        holdout = load_benchmark(HOLDOUT_PATH)
+        main = load_benchmark()
+        assert holdout.version != main.version
+        assert len(holdout) == 50
+        assert all(case.id.startswith("HO-") for case in holdout.cases)
+        assert {case.source["prompt"] for case in holdout.cases} == set(HOLDOUT_PROMPTS)
+        assert not {c.id for c in holdout.cases} & {c.id for c in main.cases}
+
+    def test_every_case_carries_full_provenance(self) -> None:
+        for case in load_benchmark(HOLDOUT_PATH).cases:
+            for key in ("target_model", "target_base_url", "judge", "judge_model", "captured_at"):
+                assert case.source.get(key), f"{case.id} lacks {key}"

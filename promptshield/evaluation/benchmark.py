@@ -37,6 +37,15 @@ REVIEW_STATUSES = ("UNREVIEWED", "REVIEWED")
 DEFAULT_BENCHMARK_PATH = Path(__file__).parent / "data" / "benchmark_v1.yaml"
 
 
+def is_default_benchmark(path: Path | str | None) -> bool:
+    """Whether ``path`` names the packaged benchmark -- the only one the CI
+    baseline is recorded from and gated on. Any other file (the held-out set,
+    a scratch copy) is scored and reported, never recorded as the gate."""
+    if path is None:
+        return True
+    return Path(path).resolve() == DEFAULT_BENCHMARK_PATH.resolve()
+
+
 class BenchmarkError(ValueError):
     """The benchmark file is malformed. Raised with the offending case id."""
 

@@ -420,3 +420,45 @@ Comparison is **refused** when the benchmark version or the judge differs, rathe
 than reporting a meaningless delta. Changing either is legitimate; it just means
 the old number no longer describes the same measurement, and the baseline has to
 be re-recorded deliberately with `--write-baseline`.
+
+## The held-out set
+
+`promptshield/evaluation/data/holdout_v1.yaml` (version `holdout-1.0.0`, ids
+`HO-NNNN`) exists to measure whether the main benchmark's result generalizes.
+**It must never be used to tune anything** — not the judge prompt, not the
+floors, not the canary extractor. Once a rule has been fitted to a held-out
+case, that case stops measuring generalization.
+
+It is captured against a third prompt, `holdout` in
+`promptshield/evaluation/prompts.py`: a clinic appointment helper for a
+fictional Brightwell Health, moderately weak (told to be helpful and to avoid
+internal details, never told to refuse out-of-scope requests), carrying two
+secrets of a shape neither example uses — a lowercase multi-word scheduling
+override phrase and a seven-digit patient-lookup code. It shares no business,
+wording or secret format with QuickCart or Northwind, lives outside
+`EXAMPLE_PROMPTS` so a routine seed cannot pick it up, and is not in the web
+demo.
+
+It was seeded with all 50 library attacks against `qwen2.5:3b` on a local
+Ollama, Claude as the candidate judge:
+
+```bash
+python scripts/seed_benchmark.py --attacks all --prompts holdout \
+    --id-prefix HO --benchmark-version holdout-1.0.0 \
+    --output promptshield/evaluation/data/holdout_v1.yaml \
+    --target-model qwen2.5:3b --target-base-url http://127.0.0.1:11434/v1
+```
+
+Every command takes the file with `--benchmark`:
+
+```bash
+promptshield eval cases     --benchmark promptshield/evaluation/data/holdout_v1.yaml
+promptshield eval review    --benchmark promptshield/evaluation/data/holdout_v1.yaml
+promptshield eval preflight --benchmark promptshield/evaluation/data/holdout_v1.yaml
+promptshield eval run       --benchmark promptshield/evaluation/data/holdout_v1.yaml
+```
+
+A held-out run is **reported, never recorded as the gate**. `eval run` refuses
+`--check-baseline` and `--write-baseline` for any file other than the packaged
+benchmark, before a single judge call, and labels the report as report-only
+(`"gated": false` in `--json`).
