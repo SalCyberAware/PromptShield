@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0,<85", "wheel"]  # builds the production install (pip install .); held below its next major
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,33 +26,33 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = [
-    "click>=8.1.7",
-    "rich>=13.7.0",
-    "httpx>=0.27.0",
-    "tenacity>=8.2.0",
-    "pydantic>=2.13.5",
-    "anthropic>=0.39.0",
-    "openai>=1.50.0",
-    "google-genai>=1.0.0",
-    "ollama>=0.3.0",
-    "playwright>=1.45.0",
-    "jinja2>=3.1.4",
-    "pyyaml>=6.0.1",
-    "cryptography>=42.0.0",
-    "python-dotenv>=1.0.0",
+    "click>=8.1.7,<9",            # CLI parsing: a major can change option/exit-code behaviour
+    "rich>=13.7.0,<16",           # terminal output: a major can change rendering APIs
+    "httpx>=0.27.0,<0.29",        # target-API client + retry predicates; 0.x breaks on minors (0.28 dropped proxies=)
+    "tenacity>=8.2.0,<10",        # retry/backoff on target calls: a major can change retry semantics
+    "pydantic>=2.13.5,<3",        # result models and JSON output: v3 would change validation/serialization
+    "anthropic>=0.39.0,<2",       # Claude judge: a major can change messages.create and responses
+    "openai>=1.50.0,<4",          # GPT judge + system-prompt scanner: a major can change chat.completions
+    "google-genai>=1.0.0,<3",     # Gemini judge: a major can change generate_content
+    "ollama>=0.3.0,<0.7",         # local judge; 0.x can break on minors
+    "playwright>=1.45.0,<2",      # declared but not imported by the package
+    "jinja2>=3.1.4,<4",           # HTML report rendering and autoescape: a major can change both
+    "pyyaml>=6.0.1,<7",           # attack library and benchmark loading
+    "cryptography>=42.0.0,<51",   # declared but not imported by the package; majors drop platforms/OpenSSL
+    "python-dotenv>=1.0.0,<2",    # .env key loading: a major can change lookup/override rules
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=5.0.0",
+    "pytest>=8.0.0,<10",          # gates CI
+    "pytest-asyncio>=0.23.0,<2",  # gates CI: async test mode
+    "pytest-cov>=5.0.0,<8",       # gates CI
     "black>=24.0.0",
-    "ruff>=0.16.8",
-    "mypy>=1.10.0",
+    "ruff>=0.16.8,<0.17",         # gates CI; 0.x adds rules on minors
+    "mypy>=1.10.0,<3",            # gates CI (strict)
 ]
 pdf = [
-    "weasyprint>=62.0",
+    "weasyprint>=62.0,<71",       # optional PDF output; declared but not imported
 ]
 
 [project.urls]
