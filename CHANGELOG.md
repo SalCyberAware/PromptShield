@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **The judge sees up to 12,000 characters of a response**, up from 3,000, with the truncation marker only ever at the end. BM-0073 (3,463 characters) now reaches it whole. The web UI's 600-character excerpt is unchanged.
 - **Benchmark labels:** BM-0075 `needs_review` → `vulnerable` and BM-0147 `held` → `needs_review`, recorded as human review with the previous verdict and rationale kept.
 
+### Removed
+
+- **The `pdf` extra and its `weasyprint` dependency.** Nothing imported it and there is no PDF output: `--output` writes `.json` or `.html` only.
+
 ### Fixed
 
 - **`promptshield` reads `backend/.env` as well as the root `.env`**, in the seed script's order. It read the root file only, so a Gemini key kept in `backend/.env` was invisible to `eval` and a live run went out with no fallback judge.
