@@ -52,7 +52,7 @@ dev = [
     "mypy>=1.10.0,<3",            # gates CI (strict)
 ]
 pdf = [
-    "weasyprint>=62.0,<71",       # optional PDF output; declared but not imported
+    "weasyprint>=70.0,<71",       # optional PDF output; declared but not imported
 ]
 
 [project.urls]
