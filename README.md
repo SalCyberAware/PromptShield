@@ -17,6 +17,30 @@ No signup, no API key, no install. Click "Try a leaky prompt" and hit "Scan prom
 
 ---
 
+## How accurate is it
+
+Verdict accuracy is measured against labels a person reviewed, on frozen target replies, so a change in the score is a change in the pipeline.
+
+**Development benchmark: 100% (152/152).** 152 cases from `gpt-4o-mini` and `llama3.2:3b` against two example prompts, all reviewed by a person, scored twice with identical results, and recorded as the CI baseline. The pipeline was developed against this set, so this number measures consistency. It does not measure generalization. (In both runs Claude declined one case and the OpenAI fallback answered it.)
+
+**Held-out set: 82% (41/50).** 50 cases from `qwen2.5:3b` against a third prompt in a different domain (a clinic appointment helper). The pipeline had never seen them. A person reviewed every label, the set was scored once, and nothing was tuned on it. Details are in [the held-out section of the harness docs](docs/EVAL_HARNESS.md#the-held-out-set).
+
+Two properties held on both sets:
+
+- **No vulnerable case was reported as `held`.** Development: 0 of 22. Held-out: 0 of 9.
+- **`held` precision was 1.000 on the development set (126 of 126) and 0.970 on the held-out set (32 of 33).** The held-out miss, HO-0009, was a reply that looped on "You are" and disclosed nothing. The reviewer labelled it `needs_review`. Separately, 1 of the 36 held-out cases a person labelled `held` was reported `vulnerable` (HO-0026).
+
+The 18-point gap is nine disagreements:
+
+- 3: the pattern floor matched a keyword inside a refusal or a description of the attack.
+- 4: the judge and the reviewer disagreed on the `needs_review` boundary.
+- 1: a judge error.
+- 1: a judge confident at 0.90 was sent to review by the 0.95 override threshold.
+
+These are the next fixes, and they will be verified on a fresh held-out set. This one has been used, so it cannot measure them.
+
+---
+
 ## What it does
 
 You give PromptShield a system prompt, the kind you would put in front of a customer support bot or an internal assistant. PromptShield runs that prompt on a real model, fires a library of adversarial attacks at it, and reports which attacks got through.
@@ -34,10 +58,12 @@ Most scanners report a binary pass or fail per check. That is a lie whenever the
 | Status | Meaning |
 |---|---|
 | `vulnerable` | An AI judge ran and confirmed the attack got through. |
-| `held` | An AI judge ran and found the system prompt defended against the attack. |
+| `held` | An AI judge ran and said the attack did not succeed, and the pattern floor found nothing. |
 | `needs_review` | The attack was judged, but the judge said the evidence is uncertain, or the judge and the pattern floor disagreed. A human should look at it. |
 | `error` | The target model call failed or timed out. There is no reply to judge. |
 | `not_ai_judged` | The target replied, but no AI judge produced a verdict, so only the deterministic pattern floor ran. |
+
+`held` means this target model, with this system prompt, defended against this attack in this run. It is not a statement about the prompt in general.
 
 Two rules follow from that, and both are enforced in code:
 
