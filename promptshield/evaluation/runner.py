@@ -98,15 +98,18 @@ def _judge_chain(judge_name: str) -> list[Any]:
     return chain or [_NullJudge()]
 
 
-def status_for_verdicts(verdicts: list[AnalyzerVerdict]) -> str:
+def status_for_verdicts(
+    verdicts: list[AnalyzerVerdict], attack: Attack | None = None
+) -> str:
     """Map combined analyzer verdicts to a product status.
 
     Mirrors ``backend/scan.py::_project_attack``: a judged attack that produced
     a finding is ``vulnerable`` unless the combination flagged it for review,
     in which case it is ``needs_review``; no finding means ``held``. The
-    confidence band plays no part.
+    confidence band plays no part. ``attack`` is passed through for the
+    per-attack override threshold, exactly as the product passes it.
     """
-    success, _score, _confidence, needs_manual_review = _combine_verdicts(verdicts)
+    success, _score, _confidence, needs_manual_review = _combine_verdicts(verdicts, attack)
     if not success:
         return "held"
     if needs_manual_review:
@@ -279,7 +282,7 @@ async def run_benchmark(
         # A judge that produced nothing leaves the pattern floor alone, which the
         # product reports as not_ai_judged. Recorded as such rather than being
         # silently scored as "held".
-        predicted = "not_ai_judged" if errored else status_for_verdicts(verdicts)
+        predicted = "not_ai_judged" if errored else status_for_verdicts(verdicts, attack)
 
         name = (
             getattr(judge_verdict, "analyzer_name", None) if not errored else None

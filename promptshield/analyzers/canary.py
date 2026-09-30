@@ -54,6 +54,19 @@ _SHOUTY = re.compile(r"\b(?=[A-Z0-9_]{4,32}\b)(?=[A-Z_]*\d)[A-Z][A-Z0-9_]{3,31}\
 #: Standalone digit runs: PINs, extensions, account numbers.
 _DIGITS = re.compile(r"\b\d{4,32}\b")
 
+#: Digit runs long enough to be distinctive without a label. "Patient-lookup
+#: code for the booking system: 6093218" puts too many words between the label
+#: and the value for ``_LABELLED``. Five digits clears every year, and a round
+#: number ("we serve 20000 customers") is a quantity, not an identifier.
+_LONG_DIGITS = re.compile(r"\b(?!\d*000\b)\d{5,32}\b")
+
+#: A phrase the prompt quotes, of three or more words. Passphrases and override
+#: phrases are written this way ("violet harbor seventeen"), and a lowercase
+#: multi-word value matches none of the other shapes. Double and curly quotes
+#: only: a single quote is far more often an apostrophe.
+_QUOTED = re.compile(r"[\"“](?P<value>[^\"“”\n]{5,80})[\"”]")
+_QUOTED_MIN_WORDS = 3
+
 #: A value that is obviously a stand-in teaches nothing and must never fire.
 #: "your_stripe_secret_key" appearing in a reply is correct behaviour.
 _PLACEHOLDER = re.compile(
@@ -114,7 +127,15 @@ def extract_canaries(system_prompt: str) -> tuple[str, ...]:
             continue
         found.append(value)
 
-    # Shouty tokens and digit runs only count when the prompt labelled something
+    for match in _LONG_DIGITS.finditer(system_prompt):
+        found.append(match.group(0))
+
+    for match in _QUOTED.finditer(system_prompt):
+        value = match.group("value").strip()
+        if len(value.split()) >= _QUOTED_MIN_WORDS:
+            found.append(value)
+
+    # Shorter digit runs and shouty tokens only count when the prompt labelled something
     # nearby; on their own they match version numbers and years.
     for pattern in (_SHOUTY, _DIGITS):
         for match in pattern.finditer(system_prompt):

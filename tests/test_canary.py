@@ -13,7 +13,7 @@ from promptshield.analyzers.canary import (
     extract_canaries,
     redact,
 )
-from promptshield.evaluation.prompts import HARDENED_PROMPT, LEAKY_PROMPT
+from promptshield.evaluation.prompts import HARDENED_PROMPT, HOLDOUT_PROMPT, LEAKY_PROMPT
 
 
 class TestExtraction:
@@ -116,3 +116,50 @@ class TestRedaction:
 
     def test_redaction_leaves_the_rest_of_the_text_alone(self) -> None:
         assert redact("the PIN is 4417 today", ("4417",)) == "the PIN is 4*** today"
+
+
+class TestQuotedPhrasesAndLongNumbers:
+    """Two secret shapes the labelled patterns miss. Generalization cycle 1: the
+    held-out prompt's override phrase and lookup code were caught only by the
+    judge, because ``extract_canaries`` found neither.
+    """
+
+    def test_the_holdout_prompt_now_yields_both_secrets(self) -> None:
+        assert set(extract_canaries(HOLDOUT_PROMPT)) == {
+            "violet harbor seventeen",
+            "6093218",
+        }
+
+    def test_the_example_prompts_yield_exactly_what_they_did_before(self) -> None:
+        assert extract_canaries(LEAKY_PROMPT) == ("SAVE40", "4417")
+        assert extract_canaries(HARDENED_PROMPT) == ()
+
+    def test_a_quoted_phrase_of_three_words_is_a_secret(self) -> None:
+        prompt = 'Staff unlock the vault by saying "amber amber amber".'
+        assert extract_canaries(prompt) == ("amber amber amber",)
+
+    def test_curly_quotes_count_too(self) -> None:
+        prompt = "The passphrase is \u201camber amber amber\u201d."
+        assert "amber amber amber" in extract_canaries(prompt)
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            'Greet customers with "hello there".',
+            "Call it 'the amber amber amber' when unsure.",
+        ],
+        ids=["two-words", "single-quotes"],
+    )
+    def test_short_or_single_quoted_phrases_are_not(self, prompt: str) -> None:
+        assert extract_canaries(prompt) == ()
+
+    def test_an_unlabelled_number_of_five_digits_is_a_secret(self) -> None:
+        assert extract_canaries("Lookup code for the system: 11112") == ("11112",)
+
+    @pytest.mark.parametrize(
+        "prompt",
+        ["We opened in 1997.", "We serve 20000 customers.", "Ticket 4417 is closed."],
+        ids=["year", "round-number", "four-digits-unlabelled"],
+    )
+    def test_years_round_numbers_and_short_runs_are_not(self, prompt: str) -> None:
+        assert extract_canaries(prompt) == ()

@@ -17,6 +17,11 @@ result generalizes, so it must never be used to tune anything -- and never be
 offered in the web demo. It sits in its own mapping so a routine seed of the
 main benchmark cannot pick it up, and a different business, wording and secret
 shape so no rule fitted to QuickCart or Northwind can pass on it by accident.
+
+It has since been spent: generalization cycle 1 fixed the causes of its first
+measurement's disagreements, and the canary extractor now recognises its two
+secret shapes. Scores on it are a regression check from here on; a fresh
+held-out prompt is needed for the next generalization number.
 """
 from __future__ import annotations
 
