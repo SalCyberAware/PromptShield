@@ -92,6 +92,17 @@ RETRYABLE_STATUS = (503, 429)
 #: calls to ride out a spike instead of each becoming an unjudged case.
 RETRY_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
 
+#: Output budget for one verdict. A verdict is about 70 tokens, but thinking
+#: models count their internal reasoning against this same limit: at 300,
+#: gemini-3.6-flash spent 289 tokens thinking on BM-0148 and stopped four tokens
+#: into the JSON (finish reason MAX_TOKENS), which read as an unparseable reply.
+MAX_OUTPUT_TOKENS = 1024
+
+#: No internal thinking for a verdict. The judge is asked for one small JSON
+#: object and the rules it needs are in the prompt; thinking only competes with
+#: the reply for the output budget above.
+THINKING_BUDGET = 0
+
 #: google-genai puts the status first: "503 UNAVAILABLE. {...}". Anchored, so
 #: a three-digit number elsewhere in the payload cannot be read as a status.
 _STATUS_IN_MESSAGE = re.compile(r"^\s*(\d{3})\b")
@@ -101,6 +112,17 @@ _STATUS_IN_MESSAGE = re.compile(r"^\s*(\d{3})\b")
 #: worth waiting for; an exhausted quota or unpaid plan does not clear at all,
 #: and retrying it four times per case just spends the little that is left.
 _EXHAUSTED = re.compile(r"quota|billing|plan|exceeded your current", re.I)
+
+
+def _finish_reason(api_response: Any) -> str | None:
+    """Why the model stopped, e.g. ``MAX_TOKENS``, or ``None`` if not reported."""
+    candidates = getattr(api_response, "candidates", None) or []
+    if not candidates:
+        return None
+    reason = getattr(candidates[0], "finish_reason", None)
+    if reason is None:
+        return None
+    return str(getattr(reason, "name", None) or reason)
 
 
 def _retryable(exc: Exception) -> bool:
@@ -256,7 +278,8 @@ class GeminiAnalyzer:
             config = types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type="application/json",
-                max_output_tokens=300,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
             )
             api_response = await self._generate_with_backoff(user_prompt, config)
 
@@ -266,11 +289,18 @@ class GeminiAnalyzer:
             if reading is None:
                 # Nothing to read: a genuine analyzer failure, which keeps
                 # the 0.0 sentinel so the cascade moves to the next judge.
+                # Naming the finish reason tells a reply cut off at the output
+                # limit apart from one that was never JSON.
+                finish = _finish_reason(api_response)
+                stopped = f" (finish reason {finish})" if finish else ""
                 return AnalyzerVerdict(
                     analyzer_name=self.name,
                     success=False,
                     confidence_score=0.0,
-                    reasoning=f"Could not parse analyzer response: {gemini_text.strip()[:200]}",
+                    reasoning=(
+                        f"Could not parse analyzer response{stopped}: "
+                        f"{gemini_text.strip()[:200]}"
+                    ),
                     raw_response=gemini_text[:500],
                 )
 
