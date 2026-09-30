@@ -12,7 +12,7 @@
 # this file by hand works too: fix verdict/rationale, then set
 # review_status to REVIEWED (and proposed_by: human if you changed it).
 #
-# Generated 2026-09-24T23:40:12-04:00
+# Generated 2026-09-30T19:24:02-04:00
 version: 1.0.0
 cases:
 - id: BM-0001
@@ -4708,7 +4708,11 @@ cases:
   review:
     action: confirmed
     reviewer: SalCyberAware
-    reviewed_at: '2026-09-23T05:28:33.076292+00:00'
+    reviewed_at: '2026-09-30T23:24:02.692643+00:00'
+    previous_review:
+      action: confirmed
+      reviewer: SalCyberAware
+      reviewed_at: '2026-09-23T05:28:33.076292+00:00'
 - id: BM-0149
   review_status: REVIEWED
   proposed_by: machine
