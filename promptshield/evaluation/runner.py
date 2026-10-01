@@ -23,7 +23,13 @@ from typing import Any
 from .. import __version__, model_config
 from ..analyzers.pattern import PatternAnalyzer
 from ..attacks.library import AttackLibrary
-from ..engines.base import _combine_verdicts
+from ..engines.base import (
+    SECOND_OPINION_JUDGES,
+    _combine_verdicts,
+    canary_settles,
+    needs_second_opinion,
+    resolve_second_opinion,
+)
 from ..models import AnalyzerVerdict, Attack
 from .benchmark import Benchmark, BenchmarkCase
 from .metrics import RunMetrics, score
@@ -130,6 +136,13 @@ class CaseResult:
     judge_verdict: str | None = None
     #: Which judge answered: the primary, or a fallback it fell through to.
     judge_name: str | None = None
+    #: The second opinion on a borderline verdict (``needs_second_opinion``):
+    #: which judge gave it and what it said. ``None`` when none was asked for,
+    #: or when no later judge in the chain answered.
+    second_judge_name: str | None = None
+    second_judge_verdict: str | None = None
+    second_judge_confidence: float | None = None
+    second_judge_reasoning: str | None = None
 
     @property
     def agrees(self) -> bool:
@@ -168,6 +181,30 @@ class _NullJudge:
         )
 
 
+@dataclass(frozen=True)
+class _Judged:
+    """What the judge chain produced for one case."""
+
+    #: What the answering judge said, or the primary's failure when none did.
+    first: AnalyzerVerdict | None
+    #: Every judge in the chain failed.
+    errored: bool
+    #: The second opinion on a borderline ``first``, if one was asked and given.
+    second: AnalyzerVerdict | None = None
+    #: The second judge that would have been asked, when ``canary_settles``
+    #: kept the question from being put to it.
+    skipped_canary: str | None = None
+
+    @property
+    def combined(self) -> AnalyzerVerdict | None:
+        """The verdict that goes into the combination with the floor."""
+        if self.first is None or self.errored:
+            return None
+        if self.second is None:
+            return self.first
+        return resolve_second_opinion(self.first, self.second)
+
+
 async def _judge_case(
     judges: list[Any],
     attack: Attack,
@@ -175,8 +212,15 @@ async def _judge_case(
     system_prompt: str | None = None,
     attempts: dict[str, int] | None = None,
     target_model: str | None = None,
-) -> tuple[AnalyzerVerdict | None, bool]:
-    """Walk the judge chain until one answers. Returns its verdict and whether all failed.
+) -> _Judged:
+    """Walk the judge chain until one answers, then get a second opinion if it is borderline.
+
+    Mirrors ``BaseScanner._judge_attack``. A success or failed below
+    ``SECOND_OPINION_BELOW`` is put to the answering judge's designated second
+    judge (``SECOND_OPINION_JUDGES``) and to no other, under the same
+    same-family rule as a fallback. When that judge is not in the chain, is
+    excluded, or does not answer, the first verdict stands alone. A success the
+    floor's canary check already proves is not put to it (``canary_settles``).
 
     Mirrors the product's cascade in ``BaseScanner._run_ai_with_cascade``: a
     raised exception or the 0.0-confidence internal-error sentinel both mean
@@ -191,8 +235,73 @@ async def _judge_case(
     skipped: ``--judge openai`` is an explicit request to measure that judge.
     """
     attempts = attempts if attempts is not None else {}
+    index, verdict = await _walk_chain(
+        judges, 0, attack, response, system_prompt, attempts, target_model
+    )
+    if index is None:
+        return _Judged(first=verdict, errored=True)
+    assert verdict is not None
+    if not needs_second_opinion(verdict):
+        return _Judged(first=verdict, errored=False)
+    designated = SECOND_OPINION_JUDGES.get(verdict.analyzer_name)
+    for position, judge in enumerate(judges):
+        name = getattr(judge, "name", None)
+        if position == index or designated is None or name != designated:
+            continue
+        if model_config.judge_excluded_for_target(designated, target_model):
+            break
+        if canary_settles(verdict, attack, response, system_prompt):
+            return _Judged(first=verdict, errored=False, skipped_canary=designated)
+        second = await _ask_once(judge, attack, response, system_prompt, attempts)
+        return _Judged(first=verdict, errored=False, second=second)
+    return _Judged(first=verdict, errored=False)
+
+
+def _second_opinion_counts(
+    counts: dict[str, dict[str, int]], judge_name: str
+) -> dict[str, int]:
+    """The provenance counters for one second-opinion judge, created on first use."""
+    return counts.setdefault(judge_name, {"agreed": 0, "disagreed": 0, "skipped_canary": 0})
+
+
+async def _ask_once(
+    judge: Any,
+    attack: Attack,
+    response: str,
+    system_prompt: str | None,
+    attempts: dict[str, int],
+) -> AnalyzerVerdict | None:
+    """One call to one judge for a second opinion: its verdict, or ``None``.
+
+    Never raises ``JudgeUnavailableError``: a second judge that cannot be paid
+    for leaves the first verdict standing, it does not stop the run.
+    """
+    name = getattr(judge, "name", "second_judge")
+    attempts[name] = attempts.get(name, 0) + 1
+    try:
+        verdict: AnalyzerVerdict = await judge.analyze(attack, response, system_prompt)
+    except Exception:  # noqa: BLE001 - an unavailable second judge is not an error
+        return None
+    return verdict if verdict.confidence_score > 0.0 else None
+
+
+async def _walk_chain(
+    judges: list[Any],
+    start: int,
+    attack: Attack,
+    response: str,
+    system_prompt: str | None,
+    attempts: dict[str, int],
+    target_model: str | None,
+) -> tuple[int | None, AnalyzerVerdict | None]:
+    """Ask ``judges[start:]`` in order. Returns the answering index and its verdict.
+
+    When none answers the index is ``None`` and the verdict is the first failure.
+    """
     first_failure: AnalyzerVerdict | None = None
     for index, judge in enumerate(judges):
+        if index < start:
+            continue
         name = getattr(judge, "name", f"judge{index}")
         if index > 0 and model_config.judge_excluded_for_target(name, target_model):
             continue
@@ -202,7 +311,7 @@ async def _judge_case(
         except Exception:  # noqa: BLE001 - a judge outage must not abort the run
             continue
         if verdict.confidence_score > 0.0:
-            return verdict, False
+            return index, verdict
         if index == 0 and _UNRECOVERABLE.search(str(verdict.reasoning or "")):
             # Stop the whole run rather than quietly re-scoring the remainder
             # with a different judge, which would leave one number describing
@@ -216,7 +325,7 @@ async def _judge_case(
         # instead hides why anything fell through at all.
         if first_failure is None:
             first_failure = verdict
-    return first_failure, True
+    return None, first_failure
 
 
 async def run_benchmark(
@@ -257,6 +366,8 @@ async def run_benchmark(
     #: being reached at all. A fallback that is never called and a fallback that
     #: is called and fails look identical in `judges_answered` alone.
     attempts: dict[str, int] = {}
+    #: Second-opinion judge -> how often it agreed and disagreed with the first.
+    second_opinions: dict[str, dict[str, int]] = {}
     for case in cases:
         attack = attacks.get(case.attack_id)
         if attack is None:
@@ -268,7 +379,7 @@ async def run_benchmark(
         # Floor and judge see the same system prompt, as they do in the product.
         system_prompt = resolve_prompt(str(case.source.get("prompt") or ""))
         verdicts = [pattern.analyze(attack, case.response, system_prompt)]
-        judge_verdict, errored = await _judge_case(
+        judged = await _judge_case(
             chain,
             attack,
             case.response,
@@ -276,8 +387,14 @@ async def run_benchmark(
             attempts,
             target_model=str(case.source.get("target_model") or "") or None,
         )
-        if judge_verdict is not None and not errored:
-            verdicts.append(judge_verdict)
+        judge_verdict, errored, second = judged.first, judged.errored, judged.second
+        if judged.combined is not None:
+            verdicts.append(judged.combined)
+        if second is not None and judge_verdict is not None:
+            asked = _second_opinion_counts(second_opinions, second.analyzer_name)
+            asked["agreed" if second.verdict == judge_verdict.verdict else "disagreed"] += 1
+        if judged.skipped_canary is not None:
+            _second_opinion_counts(second_opinions, judged.skipped_canary)["skipped_canary"] += 1
 
         # A judge that produced nothing leaves the pattern floor alone, which the
         # product reports as not_ai_judged. Recorded as such rather than being
@@ -304,6 +421,12 @@ async def run_benchmark(
                     else None
                 ),
                 judge_name=None if errored else name,
+                second_judge_name=second.analyzer_name if second else None,
+                second_judge_verdict=(
+                    second.verdict.value if second is not None and second.verdict else None
+                ),
+                second_judge_confidence=second.confidence_score if second else None,
+                second_judge_reasoning=second.reasoning if second else None,
             )
         )
 
@@ -337,6 +460,12 @@ async def run_benchmark(
                 name: count for name, count in sorted(answered.items())
             },
             "judges_called": {name: count for name, count in sorted(attempts.items())},
+            # Borderline verdicts put to a second judge. A number whose
+            # needs_review count comes partly from judges disagreeing is not the
+            # same measurement as one from a single judge.
+            "second_opinions": {
+                name: dict(counts) for name, counts in sorted(second_opinions.items())
+            },
             "included_unreviewed": include_unreviewed,
             "recorded_at": datetime.now(UTC).isoformat(),
         },

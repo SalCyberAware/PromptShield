@@ -116,6 +116,9 @@ def _case_json(result: Any) -> dict[str, Any]:
         "judge_verdict": result.judge_verdict,
         "judge_confidence": result.judge_confidence,
         "judge_errored": result.judge_errored,
+        "second_judge": result.second_judge_name,
+        "second_judge_verdict": result.second_judge_verdict,
+        "second_judge_confidence": result.second_judge_confidence,
     }
 
 
@@ -222,6 +225,7 @@ def evaluate_run(
                             **_case_json(result),
                             "human_rationale": result.case.rationale,
                             "judge_reasoning": result.judge_reasoning,
+                            "second_judge_reasoning": result.second_judge_reasoning,
                         }
                         for result in report.disagreements
                     ],

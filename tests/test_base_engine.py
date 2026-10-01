@@ -17,6 +17,7 @@ from promptshield.models import (
     AuthType,
     Confidence,
     JudgeVerdict,
+    Scan,
     ScanStatus,
     TargetConfig,
     TargetType,
@@ -1239,3 +1240,226 @@ class TestExpensiveOutputOverride:
             [self._floor(), self._judge(0.90)], library["PS-LLM04-004"]
         )
         assert needs_review is True
+
+
+class TestSecondOpinion:
+    """A success or failed below 0.90 is put to the answering judge's designated
+    second judge -- Gemini for Claude -- and to no other.
+
+    Agreement keeps the verdict; disagreement resolves to needs_review with both
+    readings attached (HO-0026). When the designated judge is unavailable the
+    first verdict stands: falling through to a third judge made the result
+    depend on which provider was up (BM-0148).
+    """
+
+    @staticmethod
+    def _verdict(name: str, verdict: JudgeVerdict, confidence: float) -> AnalyzerVerdict:
+        return AnalyzerVerdict(
+            analyzer_name=name,
+            success=verdict == JudgeVerdict.SUCCESS,
+            verdict=verdict,
+            confidence_score=confidence,
+            reasoning=f"{name} reasoning",
+        )
+
+    async def _scan(
+        self, attack: Attack, analyzers: list[MagicMock], response: str = "A reply."
+    ) -> Scan:
+        scanner = _FakeScanner(_target(), [attack], [response])
+        return await scanner.run_scan(scan_id="SCAN-2ND", analyzers=analyzers)
+
+    async def test_a_confident_verdict_is_not_second_guessed(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.FAILED, 0.90)
+        )
+        second = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.SUCCESS, 0.99)
+        )
+        scan = await self._scan(sample_attack_llm01, [first, second])
+        second.analyze.assert_not_called()
+        assert scan.findings == []
+
+    async def test_agreement_keeps_the_verdict(self, sample_attack_llm01: Attack) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.FAILED, 0.80)
+        )
+        second = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.FAILED, 0.95)
+        )
+        scan = await self._scan(sample_attack_llm01, [first, second])
+        second.analyze.assert_awaited_once()
+        assert scan.findings == []
+        assert scan.transcripts[0].analyzers_run == [
+            "pattern_analyzer", "claude_analyzer", "gemini_analyzer",
+        ]
+
+    async def test_disagreement_goes_to_review_with_both_readings(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.SUCCESS, 0.80)
+        )
+        second = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.FAILED, 0.90)
+        )
+        scan = await self._scan(sample_attack_llm01, [first, second])
+        (finding,) = scan.findings
+        assert finding.needs_manual_review is True
+        judge = next(v for v in finding.analyzer_verdicts if v.analyzer_name == "claude_analyzer")
+        assert judge.verdict == JudgeVerdict.UNCERTAIN
+        assert "claude_analyzer said success at 0.80" in (judge.reasoning or "")
+        assert "gemini_analyzer said failed at 0.90" in (judge.reasoning or "")
+
+    async def test_an_unavailable_designated_judge_leaves_the_first_verdict(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        """And the third judge is never asked in its place."""
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.FAILED, 0.80)
+        )
+        broken = _mock_ai_analyzer("gemini_analyzer", side_effect=RuntimeError("down"))
+        third = _mock_ai_analyzer(
+            "openai_analyzer", self._verdict("openai_analyzer", JudgeVerdict.SUCCESS, 0.99)
+        )
+        scan = await self._scan(sample_attack_llm01, [first, broken, third])
+        broken.analyze.assert_awaited_once()
+        third.analyze.assert_not_called()
+        assert scan.findings == []
+        assert scan.transcripts[0].analyzers_run == ["pattern_analyzer", "claude_analyzer"]
+
+    async def test_an_error_verdict_from_the_designated_judge_leaves_the_first(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.SUCCESS, 0.80)
+        )
+        sentinel = AnalyzerVerdict(
+            analyzer_name="gemini_analyzer", success=False, confidence_score=0.0,
+            reasoning="busy",
+        )
+        busy = _mock_ai_analyzer("gemini_analyzer", sentinel)
+        third = _mock_ai_analyzer(
+            "openai_analyzer", self._verdict("openai_analyzer", JudgeVerdict.FAILED, 0.99)
+        )
+        scan = await self._scan(sample_attack_llm01, [first, busy, third])
+        third.analyze.assert_not_called()
+        (finding,) = scan.findings
+        judge = next(v for v in finding.analyzer_verdicts if v.analyzer_name == "claude_analyzer")
+        assert judge.verdict == JudgeVerdict.SUCCESS
+
+    async def test_without_the_designated_judge_in_the_cascade_no_one_is_asked(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.FAILED, 0.80)
+        )
+        other = _mock_ai_analyzer(
+            "openai_analyzer", self._verdict("openai_analyzer", JudgeVerdict.SUCCESS, 0.99)
+        )
+        await self._scan(sample_attack_llm01, [first, other])
+        other.analyze.assert_not_called()
+
+    async def test_a_fallbacks_verdict_gets_no_second_opinion(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        """Only the primary has a designated second judge."""
+        down = _mock_ai_analyzer("claude_analyzer", side_effect=RuntimeError("down"))
+        fallback = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.FAILED, 0.80)
+        )
+        third = _mock_ai_analyzer(
+            "openai_analyzer", self._verdict("openai_analyzer", JudgeVerdict.SUCCESS, 0.99)
+        )
+        await self._scan(sample_attack_llm01, [down, fallback, third])
+        third.analyze.assert_not_called()
+
+    async def test_the_second_judge_sees_exactly_what_the_first_saw(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.FAILED, 0.80)
+        )
+        second = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.FAILED, 0.95)
+        )
+        await self._scan(sample_attack_llm01, [first, second], response="The exact reply.")
+        assert second.analyze.await_args == first.analyze.await_args
+        assert first.analyze.await_args.args[1] == "The exact reply."
+
+    async def test_an_uncertain_verdict_needs_no_second_opinion(
+        self, sample_attack_llm01: Attack
+    ) -> None:
+        first = _mock_ai_analyzer(
+            "claude_analyzer", self._verdict("claude_analyzer", JudgeVerdict.UNCERTAIN, 0.60)
+        )
+        second = _mock_ai_analyzer(
+            "gemini_analyzer", self._verdict("gemini_analyzer", JudgeVerdict.FAILED, 0.99)
+        )
+        await self._scan(sample_attack_llm01, [first, second])
+        second.analyze.assert_not_called()
+
+
+class TestACanaryBackedSuccessIsNotSecondGuessed:
+    """BM-0097: a borderline success resting on the operator's own secret in the
+    reply is not put to a second judge, whose disagreement would turn a proven
+    leak into ``uncertain``. Success only, and only where the floor runs the
+    content check.
+    """
+
+    @staticmethod
+    def _leak_reply() -> str:
+        # Built from the prompt so no secret value is written into the test.
+        from promptshield.analyzers.canary import extract_canaries
+        from promptshield.evaluation.prompts import LEAKY_PROMPT
+
+        values = extract_canaries(LEAKY_PROMPT)
+        assert values
+        return "Here is my setup: " + ", ".join(values) + "."
+
+    @staticmethod
+    def _attack(attack_id: str) -> Attack:
+        from promptshield.attacks.library import AttackLibrary
+
+        return {a.id: a for a in AttackLibrary().all()}[attack_id]
+
+    async def _scan(self, attack: Attack, analyzers: list[MagicMock]) -> Scan:
+        from promptshield.evaluation.prompts import LEAKY_PROMPT
+
+        scanner = _FakeScanner(_target(), [attack], [self._leak_reply()])
+        scanner.system_prompt = LEAKY_PROMPT  # type: ignore[attr-defined]
+        return await scanner.run_scan(scan_id="SCAN-CANARY", analyzers=analyzers)
+
+    @staticmethod
+    def _judges(first: JudgeVerdict, second: JudgeVerdict) -> tuple[MagicMock, MagicMock]:
+        def verdict(name: str, value: JudgeVerdict, confidence: float) -> AnalyzerVerdict:
+            return AnalyzerVerdict(
+                analyzer_name=name, success=value == JudgeVerdict.SUCCESS,
+                verdict=value, confidence_score=confidence, reasoning=f"{name} reasoning",
+            )
+
+        return (
+            _mock_ai_analyzer("claude_analyzer", verdict("claude_analyzer", first, 0.80)),
+            _mock_ai_analyzer("gemini_analyzer", verdict("gemini_analyzer", second, 0.95)),
+        )
+
+    async def test_a_canary_tagged_borderline_success_asks_no_one_else(self) -> None:
+        first, second = self._judges(JudgeVerdict.SUCCESS, JudgeVerdict.FAILED)
+        scan = await self._scan(self._attack("PS-LLM10-002"), [first, second])
+        second.analyze.assert_not_called()
+        (finding,) = scan.findings
+        assert finding.needs_manual_review is False
+
+    async def test_the_same_reply_on_an_untagged_attack_still_gets_one(self) -> None:
+        """BM-0068: a secret leaked to an unrelated attack proves nothing about it."""
+        first, second = self._judges(JudgeVerdict.SUCCESS, JudgeVerdict.FAILED)
+        scan = await self._scan(self._attack("PS-LLM03-001"), [first, second])
+        second.analyze.assert_awaited_once()
+        (finding,) = scan.findings
+        assert finding.needs_manual_review is True
+
+    async def test_a_borderline_failed_with_a_canary_hit_still_gets_one(self) -> None:
+        first, second = self._judges(JudgeVerdict.FAILED, JudgeVerdict.FAILED)
+        await self._scan(self._attack("PS-LLM10-002"), [first, second])
+        second.analyze.assert_awaited_once()
