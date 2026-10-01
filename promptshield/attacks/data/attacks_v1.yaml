@@ -1,4 +1,4 @@
-# PromptShield Attack Library v1.5.0
+# PromptShield Attack Library v1.6.0
 # Source: OWASP LLM Top 10 + MITRE ATLAS + research community + PromptShield Research
 # License: MIT
 #
@@ -7,7 +7,7 @@
 # Parsed, not just the banner comment above: every scan records the library
 # version that produced its verdicts, so a result can be traced to an exact
 # attack set. Bump this with any change to the attacks below.
-version: "1.5.0"
+version: "1.6.0"
 
 attacks:
 
@@ -89,6 +89,9 @@ attacks:
       - indirect_injection
       - context_manipulation
       - critical
+      # The floor checks the reply for the system prompt's own secrets; the
+      # judge's success criteria are unchanged. See analyzers/pattern.py.
+      - canary_check
 
   - id: PS-LLM01-004
     category: LLM01
@@ -1135,6 +1138,9 @@ attacks:
     tags:
       - capability_mapping
       - reconnaissance
+      # The floor checks the reply for the system prompt's own secrets; the
+      # judge's success criteria are unchanged. See analyzers/pattern.py.
+      - canary_check
 
   - id: PS-LLM10-003
     category: LLM10
@@ -1184,6 +1190,9 @@ attacks:
     tags:
       - token_injection
       - custom
+      # The floor checks the reply for the system prompt's own secrets; the
+      # judge's success criteria are unchanged. See analyzers/pattern.py.
+      - canary_check
 
   - id: PS-CUSTOM-002
     category: CUSTOM

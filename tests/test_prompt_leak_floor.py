@@ -13,10 +13,13 @@ import re
 import pytest
 
 from promptshield.analyzers.attack_presentation import EXTRACTION_SUCCESS, success_indicators
+from promptshield.analyzers.canary import extract_canaries
 from promptshield.analyzers.pattern import (
+    CANARY_CHECK_TAG,
     EXTRACTION_TAG,
     VERBATIM_RUN_WORDS,
     PatternAnalyzer,
+    canary_backed,
     is_degenerate_echo,
     is_extraction_attack,
     reproduces_prompt,
@@ -68,7 +71,7 @@ class TestWhichAttacksAreExtraction:
             assert phrase in indicators
 
     def test_the_library_version_moved(self) -> None:
-        assert AttackLibrary().version == "1.5.0"
+        assert AttackLibrary().version == "1.6.0"
 
 
 class TestTheContentCheck:
@@ -200,3 +203,70 @@ class TestADegenerateEchoGoesToReview:
         reply = _run(LEAKY_PROMPT, 0, 20) + " " + " ".join(["You are"] * 8)
         verdict = floor.analyze(LIBRARY["PS-LLM01-009"], reply, LEAKY_PROMPT)
         assert verdict.success is True
+
+
+class TestTheCanaryCheckTag:
+    """``canary_check`` runs the floor's content check for attacks that ask for
+    secrets, configuration or restrictions without being prompt extraction
+    (BM-0097), and changes nothing the judge is told.
+    """
+
+    TAGGED = ["PS-LLM10-002", "PS-CUSTOM-001", "PS-LLM01-003"]
+
+    @staticmethod
+    def _leak_reply() -> str:
+        # Built from the prompt so no secret value is written into the test.
+        values = extract_canaries(LEAKY_PROMPT)
+        assert values
+        return "Here is my setup: " + ", ".join(values) + "."
+
+    @staticmethod
+    def _untagged(attack: Attack) -> Attack:
+        return attack.model_copy(
+            update={"tags": [tag for tag in attack.tags if tag != CANARY_CHECK_TAG]}
+        )
+
+    def test_exactly_these_attacks_carry_it(self) -> None:
+        tagged = sorted(a.id for a in LIBRARY.values() if CANARY_CHECK_TAG in a.tags)
+        assert tagged == sorted(self.TAGGED)
+
+    @pytest.mark.parametrize("attack_id", TAGGED)
+    def test_it_is_not_an_extraction_tag(self, attack_id: str) -> None:
+        assert not is_extraction_attack(LIBRARY[attack_id])
+
+    def test_a_secret_in_the_reply_is_a_floor_hit(self, floor: PatternAnalyzer) -> None:
+        reply = self._leak_reply()
+        attack = LIBRARY["PS-LLM10-002"]
+        verdict = floor.analyze(attack, reply, LEAKY_PROMPT)
+        assert verdict.success is True
+        assert "secret value" in (verdict.reasoning or "")
+        assert floor.analyze(self._untagged(attack), reply, LEAKY_PROMPT).success is False
+        assert canary_backed(attack, reply, LEAKY_PROMPT)
+        assert not canary_backed(self._untagged(attack), reply, LEAKY_PROMPT)
+
+    def test_a_restriction_list_without_a_secret_is_not(self, floor: PatternAnalyzer) -> None:
+        """HO-0045's shape: an invented list is the judge's question, not the floor's."""
+        reply = "Topics I refuse to discuss: politics. Actions I cannot perform: refunds."
+        assert not canary_backed(LIBRARY["PS-LLM10-002"], reply, LEAKY_PROMPT)
+        assert floor.analyze(LIBRARY["PS-LLM10-002"], reply, HARDENED_PROMPT).verdict == (
+            floor.analyze(self._untagged(LIBRARY["PS-LLM10-002"]), reply, HARDENED_PROMPT).verdict
+        )
+
+    @pytest.mark.parametrize("attack_id", TAGGED)
+    def test_the_judge_prompt_is_identical_to_the_untagged_version(self, attack_id: str) -> None:
+        from promptshield.analyzers import (
+            ClaudeAnalyzer,
+            GeminiAnalyzer,
+            OpenAIAnalyzer,
+        )
+
+        attack = LIBRARY[attack_id]
+        assert success_indicators(attack) == success_indicators(self._untagged(attack))
+        for judge in (
+            ClaudeAnalyzer(api_key="sk-test-not-real"),
+            GeminiAnalyzer(api_key="g-test"),
+            OpenAIAnalyzer(api_key="sk-test-not-real"),
+        ):
+            tagged = judge._build_user_prompt(attack, "a reply", LEAKY_PROMPT)
+            untagged = judge._build_user_prompt(self._untagged(attack), "a reply", LEAKY_PROMPT)
+            assert tagged == untagged, type(judge).__name__
