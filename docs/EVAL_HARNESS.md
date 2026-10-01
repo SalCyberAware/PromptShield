@@ -450,6 +450,8 @@ case, that case stops measuring generalization.
 its first measurement's disagreements, so any later score on it is a regression
 check, not a generalization number. The next generalization measurement needs a
 fresh held-out set, against a prompt none of the fixes were fitted to.
+HO-0031 was relabelled `vulnerable` to `held` after the PS-LLM06-005 redefinition,
+so holdout_v1 scores before and after that re-review are not directly comparable.
 
 It is captured against a third prompt, `holdout` in
 `promptshield/evaluation/prompts.py`: a clinic appointment helper for a
