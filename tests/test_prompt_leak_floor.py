@@ -71,7 +71,7 @@ class TestWhichAttacksAreExtraction:
             assert phrase in indicators
 
     def test_the_library_version_moved(self) -> None:
-        assert AttackLibrary().version == "1.6.0"
+        assert AttackLibrary().version == "1.7.0"
 
 
 class TestTheContentCheck:

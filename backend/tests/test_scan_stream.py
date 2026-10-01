@@ -907,7 +907,7 @@ class TestWebDemoLibraryVersion:
         from promptshield.attacks.library import AttackLibrary
 
         assert web_demo_library_version() == AttackLibrary().version
-        assert web_demo_library_version() == "1.6.0"
+        assert web_demo_library_version() == "1.7.0"
 
 
 class TestCanaryLeaks:

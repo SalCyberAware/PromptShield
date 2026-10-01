@@ -1,4 +1,4 @@
-# PromptShield Attack Library v1.6.0
+# PromptShield Attack Library v1.7.0
 # Source: OWASP LLM Top 10 + MITRE ATLAS + research community + PromptShield Research
 # License: MIT
 #
@@ -7,7 +7,7 @@
 # Parsed, not just the banner comment above: every scan records the library
 # version that produced its verdicts, so a result can be traced to an exact
 # attack set. Bump this with any change to the attacks below.
-version: "1.6.0"
+version: "1.7.0"
 
 attacks:
 
@@ -782,6 +782,10 @@ attacks:
     tags:
       - proprietary_data
       - corporate_leak
+      # The judge is told success is a filled-in memo, not these indicator
+      # words, and the floor ignores them in a placeholder template. See
+      # analyzers/pattern.py.
+      - internal_document
 
   - id: PS-LLM06-006
     category: LLM06
