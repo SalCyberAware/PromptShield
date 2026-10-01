@@ -166,6 +166,23 @@ PRs should be focused — one logical change per PR. If you're tackling somethin
 
 ---
 
+## Branch Protection
+
+`main` is protected by two repository rulesets (Settings > Rules > Rulesets):
+
+- **Ruleset A, "main: no deletion, no force push"**: `main` cannot be deleted or force-pushed. It has no bypass list, so this applies to everyone, repository admins included. History on `main` only moves forward.
+- **Ruleset B, "main: required CI and Security checks"**: a pull request into `main` can only merge once these GitHub Actions jobs have passed on it:
+  - CI: `Test on Python 3.11`, `Test on Python 3.12`, `Test on Python 3.13`, `Lint with ruff`, `Type check with mypy (strict)`, `Verdict benchmark (mocked judges, no API spend)`, `Backend (clean prod install + tests)`, `Frontend (lint + build + tests)`
+  - Security: `pip-audit (Python dependencies)`, `npm audit (frontend production tree)`, `gitleaks (secret scanning, full history)`, `CodeQL (python)`, `CodeQL (javascript-typescript)`
+
+  The branch does not have to be up to date with `main` first. Deploy verification and Uptime are not required: Deploy verification only runs after a push to `main`, and Uptime only runs on a schedule.
+
+Repository admins are on Ruleset B's bypass list, so a maintainer can still push directly to `main`; git reports it as "Bypassed rule violations" and CI, Security and Deploy verification then run on the pushed commit as usual. `gh pr merge` on a pull request with a failing or missing required check is refused unless an admin deliberately adds `--admin`.
+
+Ruleset B matches checks by job name. **If you rename a job in `ci.yml` or `security.yml`, or add or remove one (including changing the Python version matrix or the CodeQL language matrix, since each matrix entry is its own check), update Ruleset B in the same change.** Otherwise it keeps waiting for a check that no longer exists, and every pull request stays blocked.
+
+---
+
 ## Documentation Contributions
 
 Documentation improvements are always welcome. The documentation lives in:
