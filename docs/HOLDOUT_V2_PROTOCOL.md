@@ -122,3 +122,28 @@ the README:
 - Provenance: the commit measured, attack library version, judge models,
   target model and Ollama id, capture and run dates, and any excluded cases or
   deviations from this protocol.
+
+## Amendment 1 (before capture), 2026-10-02
+
+Made before any reply was captured, so no reply, label or score could have
+informed it.
+
+- Capture runs the command above with `--no-judge` added. The seed script then
+  makes no judge call and records each reply with no candidate verdict, no
+  proposed label and no rationale (`proposed_by: none`). No machine proposal
+  exists for this set, which replaces the "Labels" paragraph saying the seed
+  script records one and keeps it hidden.
+- The re-capture of an `[ERROR]` or `[TIMEOUT]` reply (or an empty one) is made
+  by the seed script straight after the failure, in the same run. A case that
+  fails twice keeps its id, stays in the file unlabelled, is marked
+  `recaptured` in its source, and is excluded from the score and counted.
+- Labelling uses `promptshield eval review --blind`. It shows the attack, the
+  success criterion the judges are given, the system prompt and the reply,
+  never any stored proposal or rationale; cases come in file order, not grouped
+  by any proposal; the only choices are vulnerable, held, needs_review, skip
+  and quit, with no confirm; and every label needs a one-line rationale.
+- Scoring refuses to run on a benchmark with any case that has a reply and no
+  label.
+
+The unlabelled capture is committed and pushed before labelling starts, so the
+replies are fixed before anyone reads them.

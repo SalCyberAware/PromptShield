@@ -36,6 +36,15 @@ REVIEW_STATUSES = ("UNREVIEWED", "REVIEWED")
 
 DEFAULT_BENCHMARK_PATH = Path(__file__).parent / "data" / "benchmark_v1.yaml"
 
+#: ``proposed_by`` for a case captured with no candidate label at all
+#: (``seed_benchmark.py --no-judge``). It carries no verdict and no rationale
+#: until a person labels it, so a blind labeller has nothing to anchor on.
+NO_PROPOSAL = "none"
+
+#: How a reply that never arrived is recorded. Such a case is kept in the file
+#: for provenance and excluded from the score.
+CAPTURE_FAILURES = ("[ERROR]", "[TIMEOUT]")
+
 
 def is_default_benchmark(path: Path | str | None) -> bool:
     """Whether ``path`` names the packaged benchmark -- the only one the CI
@@ -79,6 +88,16 @@ class BenchmarkCase:
     def reviewed(self) -> bool:
         return self.review_status == "REVIEWED"
 
+    @property
+    def labelled(self) -> bool:
+        """Whether the case carries any label, a candidate or a person's."""
+        return bool(self.verdict)
+
+    @property
+    def capture_failed(self) -> bool:
+        """The target never produced a reply, so there is nothing to label."""
+        return self.response.startswith(CAPTURE_FAILURES)
+
 
 @dataclass(frozen=True)
 class Benchmark:
@@ -94,6 +113,19 @@ class Benchmark:
     def unreviewed(self) -> tuple[BenchmarkCase, ...]:
         return tuple(case for case in self.cases if not case.reviewed)
 
+    def unlabelled(self) -> tuple[BenchmarkCase, ...]:
+        """Cases with a reply and no label of any kind: nothing can be scored
+        against them, and a score that skipped them would describe a subset."""
+        return tuple(
+            case for case in self.cases if not case.labelled and not case.capture_failed
+        )
+
+    def excluded(self) -> tuple[BenchmarkCase, ...]:
+        """Unlabelled cases whose capture failed: kept, never scored."""
+        return tuple(
+            case for case in self.cases if not case.labelled and case.capture_failed
+        )
+
     def __len__(self) -> int:
         return len(self.cases)
 
@@ -107,6 +139,36 @@ def _require(raw: dict[str, Any], key: str, case_id: str) -> Any:
 def parse_case(raw: dict[str, Any], index: int) -> BenchmarkCase:
     """Build one case, failing loudly on anything a reviewer would need."""
     case_id = str(raw.get("id") or f"<case #{index}>")
+    review_status = str(raw.get("review_status", "UNREVIEWED"))
+    proposed_by = str(raw.get("proposed_by", "machine"))
+
+    if proposed_by == NO_PROPOSAL:
+        # Captured without a judge: no verdict and no rationale, by design.
+        # Anything else here means a label crept in that nobody can account for.
+        if review_status != "UNREVIEWED":
+            raise BenchmarkError(
+                f"case {case_id!r}: proposed_by {NO_PROPOSAL!r} is only valid while "
+                "UNREVIEWED; a labelled case is proposed_by human"
+            )
+        if raw.get("verdict") or raw.get("rationale"):
+            raise BenchmarkError(
+                f"case {case_id!r}: proposed_by {NO_PROPOSAL!r} must carry no verdict "
+                "and no rationale"
+            )
+        return BenchmarkCase(
+            id=case_id,
+            attack_id=str(_require(raw, "attack_id", case_id)),
+            attack_name=str(_require(raw, "attack_name", case_id)),
+            attack_intent=str(_require(raw, "attack_intent", case_id)),
+            success_criteria=str(_require(raw, "success_criteria", case_id)),
+            response=str(_require(raw, "response", case_id)),
+            verdict="",
+            rationale="",
+            review_status=review_status,
+            proposed_by=proposed_by,
+            source=dict(raw.get("source") or {}),
+            review=dict(raw.get("review") or {}),
+        )
 
     verdict = str(_require(raw, "verdict", case_id))
     if verdict not in VERDICTS:
@@ -114,7 +176,6 @@ def parse_case(raw: dict[str, Any], index: int) -> BenchmarkCase:
             f"case {case_id!r}: verdict {verdict!r} is not one of {VERDICTS}"
         )
 
-    review_status = str(raw.get("review_status", "UNREVIEWED"))
     if review_status not in REVIEW_STATUSES:
         raise BenchmarkError(
             f"case {case_id!r}: review_status {review_status!r} is not one of "
@@ -139,7 +200,7 @@ def parse_case(raw: dict[str, Any], index: int) -> BenchmarkCase:
         verdict=verdict,
         rationale=rationale,
         review_status=review_status,
-        proposed_by=str(raw.get("proposed_by", "machine")),
+        proposed_by=proposed_by,
         source=dict(raw.get("source") or {}),
         review=dict(raw.get("review") or {}),
     )
@@ -193,9 +254,12 @@ def dump_benchmark(benchmark: Benchmark, path: Path | str) -> Path:
             "success_criteria": case.success_criteria,
             "source": case.source,
             "response": case.response,
-            "verdict": case.verdict,
-            "rationale": case.rationale,
         }
+        # An unlabelled case writes no verdict or rationale at all, rather than
+        # an empty placeholder a reader could mistake for a label.
+        if case.labelled:
+            payload["verdict"] = case.verdict
+            payload["rationale"] = case.rationale
         # Omitted entirely while empty, so an unreviewed case does not carry a
         # placeholder field through every diff.
         if case.review:

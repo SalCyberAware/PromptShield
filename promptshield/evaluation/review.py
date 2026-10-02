@@ -21,6 +21,10 @@ What a decision records, and why each part is there:
 ``review``
     Who, when, what they did, and — on a change — the verdict and rationale that
     were replaced. Nothing a reviewer overrides is deleted; it moves.
+
+Blind labelling (``label_case``) is the other path: the labeller never sees a
+proposal, so every label is the labeller's own, with their own rationale, and
+``proposed_by`` is ``human`` whatever the file held before.
 """
 from __future__ import annotations
 
@@ -73,6 +77,23 @@ def review_queue(
     )
 
 
+def blind_queue(
+    benchmark: Benchmark, only: list[str] | None = None
+) -> tuple[BenchmarkCase, ...]:
+    """The cases to label blind, in file order.
+
+    File order, never candidate-verdict order: sorting by a proposal would tell
+    the labeller what the machine thought before they read a word. A case whose
+    capture failed has no reply to label and is left out. With ``only``,
+    exactly those ids in the order given, as for ``review_queue``.
+    """
+    if only:
+        return review_queue(benchmark, only=only)
+    return tuple(
+        case for case in benchmark.cases if not case.reviewed and not case.capture_failed
+    )
+
+
 def queue_summary(benchmark: Benchmark) -> dict[str, int]:
     """How many unreviewed cases of each verdict remain, in review order."""
     counts = {verdict: 0 for verdict in REVIEW_ORDER}
@@ -120,6 +141,8 @@ def confirm_case(
     is what the reviewer agreed with, so rewriting it in the reviewer's words
     would misattribute it.
     """
+    if not case.labelled:
+        raise ReviewError(f"{case.id} has no proposed label to confirm; label it blind")
     return replace(
         case,
         review_status="REVIEWED",
@@ -137,20 +160,60 @@ def change_case(
     """Replace the proposed label with the reviewer's, and say why."""
     if verdict not in VERDICTS:
         raise ReviewError(f"{verdict!r} is not one of {', '.join(VERDICTS)}")
+    if not case.labelled:
+        raise ReviewError(f"{case.id} has no proposed label to change; label it blind")
     if verdict == case.verdict:
         raise ReviewError(
             f"{case.id} is already labeled {verdict!r} — confirm it instead of changing it"
         )
+    cleaned = _clean_reason(reason)
+
+    stamp = _stamp(case, reviewer, "changed", now)
+    stamp["previous_verdict"] = case.verdict
+    stamp["superseded_rationale"] = case.rationale
+    return replace(
+        case,
+        verdict=verdict,
+        rationale=cleaned,
+        review_status="REVIEWED",
+        proposed_by="human",
+        review=stamp,
+    )
+
+
+def _clean_reason(reason: str) -> str:
     cleaned = reason.strip()
     if len(cleaned) < MIN_REASON_CHARS:
         raise ReviewError(
             f"a reason needs at least {MIN_REASON_CHARS} characters to be worth "
             f"reading later (got {len(cleaned)})"
         )
+    return cleaned
 
-    stamp = _stamp(case, reviewer, "changed", now)
-    stamp["previous_verdict"] = case.verdict
-    stamp["superseded_rationale"] = case.rationale
+
+def label_case(
+    case: BenchmarkCase,
+    verdict: str,
+    reason: str,
+    reviewer: str,
+    now: datetime | None = None,
+) -> BenchmarkCase:
+    """Record a blind label: the labeller's verdict and rationale, never a confirm.
+
+    The rationale is required for every label, including one that happens to
+    match a stored candidate, because the labeller never saw that candidate and
+    agreeing with it is not something they did. A candidate the file already
+    held is kept in the review record, not deleted, and not shown.
+    """
+    if verdict not in VERDICTS:
+        raise ReviewError(f"{verdict!r} is not one of {', '.join(VERDICTS)}")
+    cleaned = _clean_reason(reason)
+
+    stamp = _stamp(case, reviewer, "labelled_blind", now)
+    if case.labelled:
+        stamp["unseen_proposal"] = case.verdict
+        stamp["unseen_rationale"] = case.rationale
+        stamp["unseen_proposed_by"] = case.proposed_by
     return replace(
         case,
         verdict=verdict,

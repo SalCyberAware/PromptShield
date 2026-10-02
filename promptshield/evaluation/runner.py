@@ -48,6 +48,27 @@ class JudgeUnavailableError(RuntimeError):
     """
 
 
+class UnlabelledBenchmarkError(ValueError):
+    """The benchmark holds a case with a reply and no label.
+
+    Refused rather than scored around: skipping the unlabelled cases would
+    report a number for a subset nobody chose, and the cases most likely to be
+    left unlabelled are the hard ones.
+    """
+
+
+def require_labelled(benchmark: Benchmark) -> None:
+    """Raise ``UnlabelledBenchmarkError`` if any case still needs a label."""
+    missing = benchmark.unlabelled()
+    if missing:
+        shown = ", ".join(case.id for case in missing[:5])
+        more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
+        raise UnlabelledBenchmarkError(
+            f"{len(missing)} case(s) have no label ({shown}{more}). Label every "
+            "case before scoring: promptshield eval review --blind"
+        )
+
+
 #: A provider failure that no amount of retrying or falling through will fix.
 _UNRECOVERABLE = re.compile(
     r"credit balance|billing|insufficient[_ ]quota|exceeded your current quota|"
@@ -342,7 +363,12 @@ async def run_benchmark(
     with mocked judges and spend nothing. ``include_unreviewed`` must be set
     explicitly to score against candidate labels; by default only reviewed cases
     count, because an unreviewed label is not ground truth.
+
+    Refuses outright (``UnlabelledBenchmarkError``) when any case has a reply
+    and no label at all, before a single judge call. A case whose capture
+    failed and was never labelled is excluded and counted in the provenance.
     """
+    require_labelled(benchmark)
     library = library or AttackLibrary()
     attacks = {attack.id: attack for attack in library.all()}
 
@@ -357,7 +383,12 @@ async def run_benchmark(
         chain = _judge_chain(judge_name)
     judge = chain[0]
 
-    cases = benchmark.cases if include_unreviewed else benchmark.reviewed()
+    excluded = {case.id for case in benchmark.excluded()}
+    cases = tuple(
+        case
+        for case in (benchmark.cases if include_unreviewed else benchmark.reviewed())
+        if case.id not in excluded
+    )
     pattern = PatternAnalyzer()
 
     results: list[CaseResult] = []
@@ -452,6 +483,7 @@ async def run_benchmark(
                 else None
             ),
             "cases_scored": len(results),
+            "cases_excluded_capture_failed": len(excluded),
             # Which judges could have answered, in order, and which actually did
             # for each case. A number produced partly by a fallback judge is not
             # the same measurement as one produced entirely by the primary.

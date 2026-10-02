@@ -30,13 +30,22 @@ from .prompts import resolve_prompt
 from .review import (
     ReviewError,
     apply_decision,
+    blind_queue,
     change_case,
     confirm_case,
     default_reviewer,
+    label_case,
     queue_summary,
     review_queue,
 )
-from .runner import JUDGE_FALLBACKS, JUDGES, JudgeUnavailableError, run_benchmark_sync
+from .runner import (
+    JUDGE_FALLBACKS,
+    JUDGES,
+    JudgeUnavailableError,
+    UnlabelledBenchmarkError,
+    require_labelled,
+    run_benchmark_sync,
+)
 
 console = Console()
 
@@ -177,6 +186,11 @@ def evaluate_run(
             "as the gate."
         )
     benchmark = load_benchmark(benchmark_path)
+    try:
+        require_labelled(benchmark)
+    except UnlabelledBenchmarkError as exc:
+        console.print(f"[red]Not scored: {exc}[/red]")
+        raise SystemExit(2) from exc
 
     scored = benchmark.cases if include_unreviewed else benchmark.reviewed()
     if not scored:
@@ -311,6 +325,11 @@ def evaluate_preflight(judge_name: str, benchmark_path: Path | None) -> None:
     if unresolved:
         console.print(f"[red]benchmark: unknown prompt key(s) {', '.join(unresolved)}[/red]")
         raise SystemExit(2)
+    try:
+        require_labelled(benchmark)
+    except UnlabelledBenchmarkError as exc:
+        console.print(f"[red]benchmark: {exc}[/red]")
+        raise SystemExit(2) from exc
 
     probe = Attack(
         id="PREFLIGHT",
@@ -378,7 +397,7 @@ def evaluate_cases(benchmark_path: Path | None, unreviewed_only: bool) -> None:
         table.add_row(
             case.id,
             case.attack_id,
-            case.verdict,
+            case.verdict or "[dim](unlabelled)[/dim]",
             ("[green]REVIEWED[/green]" if case.reviewed else "[yellow]UNREVIEWED[/yellow]"),
             case.proposed_by,
         )
@@ -429,13 +448,25 @@ def success_criterion(case: BenchmarkCase) -> str:
     return success_indicators(attack)
 
 
+_BLIND_ACTIONS = {key: value for key, value in _ACTIONS.items() if key != "c"}
+
+
 def _show_case(
-    case: BenchmarkCase, position: int, total: int, remaining: dict[str, int]
+    case: BenchmarkCase,
+    position: int,
+    total: int,
+    remaining: dict[str, int] | None,
 ) -> None:
-    """Print everything needed to decide, so nothing has to be looked up elsewhere."""
-    left = "  ".join(f"{verdict}: {count}" for verdict, count in remaining.items() if count)
+    """Print everything needed to decide, so nothing has to be looked up elsewhere.
+
+    ``remaining`` is ``None`` in a blind review: the per-verdict counts of what
+    is left are counts of machine proposals, so they are not printed, and
+    neither is the proposal panel.
+    """
     console.rule(f"[bold]{case.id}[/bold]  ·  {position} of {total} in this queue")
-    console.print(f"[dim]remaining unreviewed — {left}[/dim]\n")
+    if remaining is not None:
+        left = "  ".join(f"{verdict}: {count}" for verdict, count in remaining.items() if count)
+        console.print(f"[dim]remaining unreviewed — {left}[/dim]\n")
 
     console.print(
         Panel(
@@ -465,6 +496,8 @@ def _show_case(
             border_style="magenta",
         )
     )
+    if remaining is None:
+        return
 
     style = _VERDICT_STYLE.get(case.verdict, "white")
     console.print(
@@ -490,8 +523,13 @@ def _show_case(
     help="Review just these cases, in this order, re-opening them even if already "
          "REVIEWED. Repeat the option or pass a comma-separated list.",
 )
+@click.option(
+    "--blind", is_flag=True,
+    help="Label without seeing any machine proposal: no proposed verdict, no "
+         "rationale, cases in file order. Every label needs a one-line rationale.",
+)
 def evaluate_review(
-    benchmark_path: Path | None, reviewer: str | None, only: tuple[str, ...]
+    benchmark_path: Path | None, reviewer: str | None, only: tuple[str, ...], blind: bool
 ) -> None:
     """Review unreviewed cases one at a time, confirming or correcting each label.
 
@@ -500,6 +538,9 @@ def evaluate_review(
 
     The file is written after every decision, so stopping partway — or losing
     the terminal — keeps everything already decided.
+
+    With --blind, cases come in file order and nothing a machine proposed is
+    shown; each label is the labeller's own, with their own rationale.
     """
     benchmark = load_benchmark(benchmark_path)
     path = benchmark.path
@@ -509,9 +550,17 @@ def evaluate_review(
     who = reviewer or default_reviewer()
     case_ids = [part.strip() for value in only for part in value.split(",") if part.strip()]
     try:
-        queue = review_queue(benchmark, only=case_ids or None)
+        queue = (blind_queue if blind else review_queue)(benchmark, only=case_ids or None)
     except ReviewError as exc:
         raise click.UsageError(str(exc)) from exc
+    if blind:
+        _review_blind(benchmark, path, queue, who, selected=bool(case_ids))
+        return
+    if any(not case.labelled for case in queue):
+        raise click.UsageError(
+            "this benchmark has cases with no proposed label to confirm or change; "
+            "label them with --blind"
+        )
     if not queue:
         console.print(
             f"[green]Nothing to review.[/green] All {len(benchmark)} case(s) in "
@@ -592,3 +641,67 @@ def evaluate_review(
     left = "  ".join(f"{v}: {n}" for v, n in remaining.items() if n)
     if left:
         console.print(f"still unreviewed — {left}")
+
+
+def _review_blind(
+    benchmark: Any, path: Path, queue: tuple[BenchmarkCase, ...], who: str, selected: bool
+) -> None:
+    """The --blind loop: attack, prompt and reply only; a label and a reason each time."""
+    if not queue:
+        console.print(f"[green]Nothing to label.[/green] {len(benchmark.reviewed())}/"
+                      f"{len(benchmark)} case(s) labelled.")
+        return
+    console.print(
+        f"[bold]{len(queue)}[/bold] {'selected' if selected else 'unlabelled'} case(s) · "
+        f"blind · labelling as [cyan]{who}[/cyan] · saving to {path}\n"
+    )
+
+    decided = 0
+    skipped = 0
+    for position, case in enumerate(queue, start=1):
+        current = next(c for c in benchmark.cases if c.id == case.id)
+        _show_case(current, position, len(queue), None)
+
+        try:
+            choice = click.prompt(
+                "[v]ulnerable  [h]eld  [n]eeds_review  [s]kip  [q]uit",
+                type=click.Choice(sorted(_BLIND_ACTIONS)),
+                show_choices=False,
+            )
+        except (click.Abort, EOFError):
+            console.print("\n[yellow]Stopped.[/yellow]")
+            break
+
+        action = _BLIND_ACTIONS[choice]
+        if action == "quit":
+            break
+        if action == "skip":
+            skipped += 1
+            console.print("[dim]skipped, still unlabelled[/dim]\n")
+            continue
+
+        updated = None
+        while updated is None:
+            try:
+                reason = click.prompt(f"one line on why it is {action}")
+            except (click.Abort, EOFError):
+                break
+            try:
+                updated = label_case(current, action, reason, who)
+            except ReviewError as exc:
+                console.print(f"[red]{exc}[/red]")
+        if updated is None:
+            console.print("[yellow]No reason given, left unlabelled.[/yellow]\n")
+            skipped += 1
+            continue
+
+        benchmark = apply_decision(benchmark, updated)
+        dump_benchmark(benchmark, path)
+        decided += 1
+        console.print(f"[green]{current.id} labelled {action} and saved[/green]\n")
+
+    left = len(blind_queue(benchmark))
+    console.print(
+        f"\n[bold]{decided} labelled[/bold], {skipped} skipped this session · "
+        f"{len(benchmark.reviewed())}/{len(benchmark)} labelled overall · {left} left"
+    )

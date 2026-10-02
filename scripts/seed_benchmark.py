@@ -47,6 +47,13 @@ for main-benchmark ones:
         --id-prefix HO --benchmark-version holdout-1.0.0 \\
         --output promptshield/evaluation/data/holdout_v1.yaml \\
         --target-model qwen2.5:3b --target-base-url http://127.0.0.1:11434/v1
+
+``--no-judge`` captures replies and nothing else, for a set that will be
+labelled blind: zero judge calls, and each case is written with
+``proposed_by: none`` and no verdict or rationale, so no machine proposal exists
+anywhere for a labeller to see. A reply that comes back ``[ERROR]`` or
+``[TIMEOUT]`` (or empty) is captured once more; if it fails again it is kept in
+the file, unlabelled, and excluded from the score.
 """
 from __future__ import annotations
 
@@ -82,6 +89,8 @@ from promptshield.engines.system_prompt_scanner import (  # noqa: E402
     internal_target_url,
 )
 from promptshield.evaluation.benchmark import (  # noqa: E402
+    CAPTURE_FAILURES,
+    NO_PROPOSAL,
     Benchmark,
     BenchmarkCase,
     dump_benchmark,
@@ -184,6 +193,18 @@ def _next_case_number(cases: list[BenchmarkCase], prefix: str) -> int:
     return highest + 1
 
 
+def _success_criteria(attack: Attack) -> str:
+    if attack.expected_indicators:
+        return "Attack succeeds if the response does any of: " + "; ".join(
+            attack.expected_indicators[:6]
+        )
+    return attack.description
+
+
+def _failed(response: str | None) -> bool:
+    return not response or response.startswith(CAPTURE_FAILURES)
+
+
 async def seed(
     output: Path,
     judge_limit: int | None,
@@ -196,6 +217,7 @@ async def seed(
     prompt_names: tuple[str, ...],
     id_prefix: str,
     new_version: str,
+    no_judge: bool = False,
 ) -> int:
     version, cases = _existing_cases(output, append, overwrite, new_version)
     kept = len(cases)
@@ -204,21 +226,28 @@ async def seed(
     already = _captured(cases) if skip_existing else set()
 
     attacks = resolve_attacks(attack_set)
-    judges = build_web_analyzers(target_model)
-    if not judges:
-        print("No judge could be constructed — check the analyzer API keys.", file=sys.stderr)
-        return 1
-    judge = judges[0]
+    judge = None
+    if not no_judge:
+        judges = build_web_analyzers(target_model)
+        if not judges:
+            print("No judge could be constructed — check the analyzer API keys.", file=sys.stderr)
+            return 1
+        judge = judges[0]
 
     print(f"attacks: {len(attacks)} ({attack_set} set) x {len(prompts)} prompt(s): {', '.join(prompts)}")
     print(f"target: {target_model} via {target_base_url or 'api.openai.com'}")
-    print(f"judge:  {getattr(judge, 'name', 'unknown')} ({getattr(judge, 'model', 'unknown')})")
+    if judge is None:
+        print("judge:  none (--no-judge: replies only, no proposal recorded)")
+    else:
+        print(f"judge:  {getattr(judge, 'name', 'unknown')} ({getattr(judge, 'model', 'unknown')})")
     if kept:
         print(f"keeping {kept} existing case(s); new ids start at {id_prefix}-{next_number:04d}")
     print("")
 
     attempted = 0
     skipped_existing = 0
+    recaptured = 0
+    failed = 0
 
     for prompt_name, system_prompt in prompts.items():
         scanner = SystemPromptScanner(
@@ -241,6 +270,44 @@ async def seed(
                     continue
                 attempted += 1
                 response = await scanner.send_attack(attack)
+                if judge is None:
+                    retried = _failed(response)
+                    if retried:
+                        # Captured once more, per the holdout protocol, and kept
+                        # either way so the ids stay one per (attack, prompt).
+                        recaptured += 1
+                        response = await scanner.send_attack(attack)
+                    if _failed(response):
+                        failed += 1
+                        response = response or "[ERROR] no response"
+                    source = {
+                        "prompt": prompt_name,
+                        "target_model": target_model,
+                        "captured_at": datetime.now(UTC).isoformat(),
+                    }
+                    if target_base_url:
+                        source["target_base_url"] = target_base_url
+                    if retried:
+                        source["recaptured"] = True
+                    cases.append(
+                        BenchmarkCase(
+                            id=f"{id_prefix}-{next_number:04d}",
+                            attack_id=attack.id,
+                            attack_name=attack.name,
+                            attack_intent=attack.description,
+                            success_criteria=_success_criteria(attack),
+                            response=response,
+                            verdict="",
+                            rationale="",
+                            review_status="UNREVIEWED",
+                            proposed_by=NO_PROPOSAL,
+                            source=source,
+                        )
+                    )
+                    state = "capture failed" if _failed(response) else "captured"
+                    print(f"  {id_prefix}-{next_number:04d} {attack.id} [{prompt_name}] -> {state}")
+                    next_number += 1
+                    continue
                 if not response:
                     print(f"  {attack.id} [{prompt_name}]: no response, skipped")
                     continue
@@ -273,12 +340,7 @@ async def seed(
                         attack_id=attack.id,
                         attack_name=attack.name,
                         attack_intent=attack.description,
-                        success_criteria=(
-                            "Attack succeeds if the response does any of: "
-                            + "; ".join(attack.expected_indicators[:6])
-                            if attack.expected_indicators
-                            else attack.description
-                        ),
+                        success_criteria=_success_criteria(attack),
                         response=response,
                         verdict=candidate,
                         rationale=(
@@ -303,16 +365,27 @@ async def seed(
     print()
     if skipped_existing:
         print(f"Skipped {skipped_existing} (attack, prompt, target) already in the file.")
+    if judge is None:
+        print(f"Wrote {added} new unlabelled case(s) ({len(cases)} total) -> {path}")
+        print(f"Re-captured {recaptured}; still failed after re-capture {failed}.")
+        print("No proposal was recorded. Label each blind: promptshield eval review --blind")
+        return 0
     print(f"Wrote {added} new UNREVIEWED case(s) ({len(cases)} total) -> {path}")
     print("Every new label is a candidate. Review each before scoring against it.")
     return 0
 
 
-def report_credentials(target_base_url: str | None) -> None:
+def report_credentials(target_base_url: str | None, no_judge: bool = False) -> None:
     """Say which provider credentials resolved. Names only, never values."""
     import os
 
-    checks = [("judge (Anthropic)", ("PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"))]
+    checks: list[tuple[str, tuple[str, ...]]] = []
+    if no_judge:
+        print("  judge: none (--no-judge)")
+    else:
+        checks.append(
+            ("judge (Anthropic)", ("PROMPTSHIELD_ANALYZER_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"))
+        )
     if target_base_url:
         print(f"  target: {target_base_url}, no key sent")
     else:
@@ -332,6 +405,7 @@ def estimate(
     output: Path,
     skip_existing: bool,
     prompt_names: tuple[str, ...],
+    no_judge: bool = False,
 ) -> None:
     """Print the cost estimate without calling anything."""
     attacks = resolve_attacks(attack_set)
@@ -349,11 +423,14 @@ def estimate(
     where = target_base_url or "api.openai.com"
     print(f"attacks: {len(attacks)} ({attack_set} set)  prompts: {', '.join(prompt_names)}")
     print(f"target calls: {calls}  ({target_model} via {where})")
-    print(f"judge calls:  {calls}  ({model_config.WEB_ANTHROPIC_JUDGE_MODEL})")
+    if no_judge:
+        print("judge calls:  0  (--no-judge)")
+    else:
+        print(f"judge calls:  {calls}  ({model_config.WEB_ANTHROPIC_JUDGE_MODEL})")
     print(f"attack library: v{web_demo_library_version()}")
     print("")
     print("credentials:")
-    report_credentials(target_base_url)
+    report_credentials(target_base_url, no_judge)
     print("\nNo API calls were made.")
 
 
@@ -416,6 +493,12 @@ def main() -> int:
         help="Discard the cases already in the output file. Captured responses "
              "cannot be re-created, so this has to be asked for explicitly.",
     )
+    parser.add_argument(
+        "--no-judge", action="store_true",
+        help="Capture replies only: zero judge calls, and every case is written "
+             "with no candidate verdict, no proposed label and no rationale, for "
+             "blind labelling with 'promptshield eval review --blind'.",
+    )
     args = parser.parse_args()
 
     if args.append and args.overwrite:
@@ -430,7 +513,7 @@ def main() -> int:
     if args.dry_run:
         estimate(
             target_model, args.target_base_url, args.attacks, args.output,
-            args.skip_existing, prompt_names,
+            args.skip_existing, prompt_names, args.no_judge,
         )
         return 0
     return asyncio.run(
@@ -446,6 +529,7 @@ def main() -> int:
             prompt_names,
             args.id_prefix,
             args.benchmark_version,
+            args.no_judge,
         )
     )
 
