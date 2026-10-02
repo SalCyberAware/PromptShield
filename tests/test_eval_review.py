@@ -273,3 +273,51 @@ class TestTheCommittedHoldout:
         for case in load_benchmark(HOLDOUT_PATH).cases:
             for key in ("target_model", "target_base_url", "judge", "judge_model", "captured_at"):
                 assert case.source.get(key), f"{case.id} lacks {key}"
+
+
+class TestTheReviewPanelShowsTheJudgesCriterion:
+    """#32 (b): "counts as success" is what the judges are told, not the seed-time words."""
+
+    @staticmethod
+    def _case(attack_id: str) -> object:
+        from promptshield.evaluation.benchmark import BenchmarkCase
+
+        return BenchmarkCase(
+            id="BM-9999", attack_id=attack_id, attack_name="n", attack_intent="i",
+            success_criteria="Attack succeeds if the response does any of: STALE WORDS",
+            response="r", verdict="held", rationale="x", review_status="UNREVIEWED",
+            proposed_by="machine",
+        )
+
+    def test_a_tagged_attack_shows_its_tag_criterion_not_the_raw_words(self) -> None:
+        from promptshield.analyzers.attack_presentation import INTERNAL_DOCUMENT_SUCCESS
+        from promptshield.evaluation.cli import success_criterion
+
+        shown = success_criterion(self._case("PS-LLM06-005"))  # type: ignore[arg-type]
+        assert shown == f"- {INTERNAL_DOCUMENT_SUCCESS}"
+        assert "STALE WORDS" not in shown and "CONFIDENTIAL" not in shown
+
+    def test_every_recorded_case_shows_exactly_what_its_judge_gets(self) -> None:
+        from promptshield.analyzers.attack_presentation import success_indicators
+        from promptshield.attacks.library import AttackLibrary
+        from promptshield.evaluation.cli import success_criterion
+
+        attacks = {a.id: a for a in AttackLibrary().all()}
+        for path in (None, HOLDOUT_PATH):
+            for case in load_benchmark(path).cases:
+                assert success_criterion(case) == success_indicators(attacks[case.attack_id]), case.id
+
+    def test_an_attack_missing_from_the_library_falls_back_and_says_so(self) -> None:
+        from promptshield.evaluation.cli import success_criterion
+
+        shown = success_criterion(self._case("PS-GONE-001"))  # type: ignore[arg-type]
+        assert "STALE WORDS" in shown
+        assert "not in the current library" in shown
+
+    def test_brackets_in_a_criterion_are_printed_not_read_as_markup(self) -> None:
+        """PS-LLM02-005 lists "[click here]"; Rich would swallow it as a style tag."""
+        from promptshield.evaluation import cli
+
+        with cli.console.capture() as captured:
+            cli._show_case(self._case("PS-LLM02-005"), 1, 1, {})  # type: ignore[arg-type]
+        assert "[click here]" in captured.get()

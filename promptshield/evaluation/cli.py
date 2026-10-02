@@ -4,14 +4,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from functools import cache
 from pathlib import Path
 from typing import Any
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from ..analyzers.attack_presentation import success_indicators
+from ..attacks.library import AttackLibrary
 from ..env import load_env_files
 from ..models import Attack, AttackCategory, Severity
 from .baseline import BaselineError, compare_to_baseline, load_baseline, write_baseline
@@ -402,6 +406,29 @@ _VERDICT_STYLE = {
 }
 
 
+@cache
+def _library_attacks() -> dict[str, Attack]:
+    return {attack.id: attack for attack in AttackLibrary().all()}
+
+
+def success_criterion(case: BenchmarkCase) -> str:
+    """What counts as success for this case's attack, exactly as the judges are told it.
+
+    Not ``case.success_criteria``: that was frozen from the raw indicator words
+    when the case was seeded, and tags now add or replace lines in what the
+    judges see (PS-LLM06-005 says a placeholder template is failed). A reviewer
+    shown the frozen words labels against a different definition (#32). Plain
+    text; the caller escapes it for display.
+    """
+    attack = _library_attacks().get(case.attack_id)
+    if attack is None:
+        return (
+            f"{case.success_criteria}\n"
+            "(attack not in the current library: criterion as recorded when seeded)"
+        )
+    return success_indicators(attack)
+
+
 def _show_case(
     case: BenchmarkCase, position: int, total: int, remaining: dict[str, int]
 ) -> None:
@@ -414,7 +441,7 @@ def _show_case(
         Panel(
             f"[bold]{case.attack_name}[/bold]  [dim]({case.attack_id})[/dim]\n\n"
             f"[bold]what it attempts[/bold]\n{case.attack_intent}\n\n"
-            f"[bold]counts as success[/bold]\n{case.success_criteria}",
+            f"[bold]counts as success[/bold]\n{escape(success_criterion(case))}",
             title="the attack",
             border_style="cyan",
         )
