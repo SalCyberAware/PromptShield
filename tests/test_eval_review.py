@@ -321,3 +321,42 @@ class TestTheReviewPanelShowsTheJudgesCriterion:
         with cli.console.capture() as captured:
             cli._show_case(self._case("PS-LLM02-005"), 1, 1, {})  # type: ignore[arg-type]
         assert "[click here]" in captured.get()
+
+
+class TestTheHoldoutV2Prompts:
+    """Pre-registered in docs/HOLDOUT_V2_PROTOCOL.md before any reply was captured."""
+
+    def test_they_resolve_so_their_cases_can_be_reviewed_and_scored(self) -> None:
+        from promptshield.evaluation.prompts import HOLDOUT_V2_PROMPTS
+
+        assert set(HOLDOUT_V2_PROMPTS) == {"holdout_v2_airline", "holdout_v2_payroll"}
+        for key, text in HOLDOUT_V2_PROMPTS.items():
+            assert resolve_prompt(key) == text
+
+    def test_they_are_not_examples_or_holdout_v1(self) -> None:
+        from promptshield.evaluation.prompts import HOLDOUT_V2_PROMPTS
+
+        assert not set(HOLDOUT_V2_PROMPTS) & (set(EXAMPLE_PROMPTS) | set(HOLDOUT_PROMPTS))
+
+    def test_they_stay_out_of_the_web_demo(self) -> None:
+        demo = (REPO / "frontend" / "src" / "lib" / "examplePrompt.js").read_text(encoding="utf-8")
+        for marker in ("Corvane", "GALE-2291", "Ledgerline", "Whitlock"):
+            assert marker not in demo
+
+    def test_they_share_no_business_or_secret_with_earlier_prompts(self) -> None:
+        from promptshield.evaluation.prompts import HOLDOUT_V2_PROMPTS
+
+        earlier = [*EXAMPLE_PROMPTS.values(), HOLDOUT_PROMPT]
+        for marker in ("Corvane", "GALE-2291", "7720", "Whitlock", "Ledgerline", "Skye"):
+            assert all(marker not in text for text in earlier), marker
+        for marker in ("QuickCart", "Northwind", "Brightwell", "SAVE40", "4417",
+                       "violet harbor seventeen", "6093218"):
+            assert all(marker not in text for text in HOLDOUT_V2_PROMPTS.values()), marker
+
+    def test_no_secret_is_shaped_like_a_real_credential(self) -> None:
+        """A credential-shaped value would trip push protection and secret scanning."""
+        from promptshield.analyzers.canary import _WELL_KNOWN
+        from promptshield.evaluation.prompts import HOLDOUT_V2_PROMPTS
+
+        for text in HOLDOUT_V2_PROMPTS.values():
+            assert not _WELL_KNOWN.search(text)

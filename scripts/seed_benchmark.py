@@ -87,11 +87,15 @@ from promptshield.evaluation.benchmark import (  # noqa: E402
     dump_benchmark,
     load_benchmark,
 )
-from promptshield.evaluation.prompts import EXAMPLE_PROMPTS, HOLDOUT_PROMPTS  # noqa: E402
+from promptshield.evaluation.prompts import (  # noqa: E402
+    EXAMPLE_PROMPTS,
+    HOLDOUT_PROMPTS,
+    HOLDOUT_V2_PROMPTS,
+)
 from promptshield.models import Attack, TargetConfig, TargetType  # noqa: E402
 
 #: Every prompt --prompts can name, by the key stored in ``source``.
-PROMPTS = {**EXAMPLE_PROMPTS, **HOLDOUT_PROMPTS}
+PROMPTS = {**EXAMPLE_PROMPTS, **HOLDOUT_PROMPTS, **HOLDOUT_V2_PROMPTS}
 
 #: What a seed uses unless told otherwise: the two examples, never the holdout.
 DEFAULT_PROMPTS = tuple(EXAMPLE_PROMPTS)
