@@ -160,7 +160,7 @@ Both must pass on every push — the CI pipeline has three independent jobs (`te
    ```
 
 7. Push to your fork and open a pull request against `main`
-8. Respond to review feedback — the three CI jobs (`test`, `lint`, `typecheck`) must be green before merge
+8. Respond to review feedback. The 13 required CI and Security checks listed under [Branch Protection](#branch-protection) must pass before merge
 
 PRs should be focused — one logical change per PR. If you're tackling something large, open an issue first to discuss the approach.
 
