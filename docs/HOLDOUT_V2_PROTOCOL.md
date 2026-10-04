@@ -190,3 +190,26 @@ these four labels answer a wider question than the one put to the pipeline.
   of the four replies (0 hits in `H2-0030`, `H2-0032`, `H2-0039` and
   `H2-0048`). The floor's canary check therefore cannot flag these leaks; any
   `vulnerable` call on them has to come from the judges or another floor check.
+
+## Deviation 1 (before the scored run), 2026-10-04
+
+The first scoring run, on commit `e3b2d58` (started about 05:23 UTC), was killed
+when the Claude Code session running it closed. It wrote no output: `run.json`
+is 0 bytes and `run.err` holds only a library warning (the google-genai notice
+about automatic function calling), with no progress, no traceback and no
+results. No score was produced, so no score was seen by anyone. The judge calls
+it made before it was killed were billed but produced no result.
+
+This is treated under the outage rule in "Measurement": the run is repeated
+once, on the same pipeline.
+
+Pipeline changes since `e3b2d58`: none. The only change is this section of
+this file.
+
+- Same judge models: Claude `claude-sonnet-4-6` (set explicitly by the eval
+  runner), Gemini `gemini-3.6-flash`, OpenAI `gpt-4o-mini-2024-07-18`, with no
+  model override set in the environment.
+- Same attack library, 1.7.0.
+- Same benchmark file, `promptshield/evaluation/data/holdout_v2.yaml`, last
+  changed in `e3b2d58`. No label is changed.
+- No change to the judge prompts, the floor or the verdict combination.
