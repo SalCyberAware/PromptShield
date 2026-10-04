@@ -8,7 +8,7 @@ PromptShield is a security tool, and we take its own security posture seriously.
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in PromptShield itself, please report it privately via **[GitHub Security Advisories](https://github.com/SalCyberAware/PromptShield/security/advisories/new)** — do not open a public issue, and do not include exploit details in a PR description.
+If you discover a security vulnerability in PromptShield itself, please report it privately using **GitHub private vulnerability reporting**: open the repository's [Security tab](https://github.com/SalCyberAware/PromptShield/security) and choose **Report a vulnerability**, or go straight to the [new advisory form](https://github.com/SalCyberAware/PromptShield/security/advisories/new). Only the maintainer can see the report. Do not open a public issue, and do not include exploit details in a PR description.
 
 When reporting, please include:
 
