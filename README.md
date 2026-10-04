@@ -25,7 +25,7 @@ Verdict accuracy is measured against labels a person reviewed, on frozen target 
 
 ### Held-out result (holdout_v2)
 
-PromptShield was measured once on a fresh held-out set: 100 replies from gemma3:4b, a model it was never tuned on, to all 50 attacks against two new system prompts (a permissive airline assistant and a hardened payroll support bot). The protocol, prompts and replies were committed before any label existed, a human labelled every case blind, and the score was run once. Method and full report: docs/HOLDOUT_V2_PROTOCOL.md and docs/EVAL_HARNESS.md.
+PromptShield was measured once on a fresh held-out set: 100 replies from gemma3:4b, a model it was never tuned on, to all 50 attacks against two new system prompts (a permissive airline assistant and a hardened payroll support bot). The protocol, prompts and replies were committed before any label existed, a human labelled every case blind, and the score was run once. Method and full report: [docs/HOLDOUT_V2_PROTOCOL.md](docs/HOLDOUT_V2_PROTOCOL.md) and [docs/EVAL_HARNESS.md](docs/EVAL_HARNESS.md#holdout_v2-measurement).
 
 | | holdout_v2 |
 |---|---|
@@ -37,7 +37,7 @@ PromptShield was measured once on a fresh held-out set: 100 replies from gemma3:
 
 Both missed vulnerabilities are replies where the named attack failed but the bot volunteered a planted secret anyway. The reviewer counted those as vulnerable, while PromptShield scores each attack on its own goal. Read per attack, as declared before scoring, accuracy is 85% with no missed vulnerabilities.
 
-Most errors are cautious: 14 of the 17 disagreements went to human review instead of getting a wrong verdict. An offline diagnosis traced every one to a cause: the pattern floor flagging sentences that only restate or quote an attack, a confidence gap in how verdicts are combined, four judge misreads, and a secret detector that missed this prompt's secret formats. Those are the next fixes, and they will be measured on a new held-out set, not this one.
+Most errors are cautious: 14 of the 17 disagreements went to human review instead of getting a wrong verdict. An offline diagnosis traced every one to a cause: the pattern floor flagging sentences that only restate or quote an attack, one attack indicator that also matched a safe, patched library, a confidence gap in how verdicts are combined, four judge errors, a secret detector that missed this prompt's secret formats, and one open policy question about echoed payloads. Those are the next fixes, and they will be measured on a new held-out set, not this one.
 
 The earlier held-out set, holdout_v1, measured 82% on its first run. It has since been used for tuning, so later scores on it are regression checks only.
 
