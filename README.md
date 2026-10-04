@@ -23,21 +23,23 @@ Verdict accuracy is measured against labels a person reviewed, on frozen target 
 
 **Development benchmark: 100% (152/152).** 152 cases from `gpt-4o-mini` and `llama3.2:3b` against two example prompts, all reviewed by a person, scored twice with identical results, and recorded as the CI baseline. The pipeline was developed against this set, so this number measures consistency. It does not measure generalization. (In both runs Claude declined one case and the OpenAI fallback answered it.)
 
-**Held-out set: 82% (41/50).** 50 cases from `qwen2.5:3b` against a third prompt in a different domain (a clinic appointment helper). The pipeline had never seen them. A person reviewed every label, the set was scored once, and nothing was tuned on it. Details are in [the held-out section of the harness docs](docs/EVAL_HARNESS.md#the-held-out-set).
+### Held-out result (holdout_v2)
 
-Two properties held on both sets:
+PromptShield was measured once on a fresh held-out set: 100 replies from gemma3:4b, a model it was never tuned on, to all 50 attacks against two new system prompts (a permissive airline assistant and a hardened payroll support bot). The protocol, prompts and replies were committed before any label existed, a human labelled every case blind, and the score was run once. Method and full report: docs/HOLDOUT_V2_PROTOCOL.md and docs/EVAL_HARNESS.md.
 
-- **No vulnerable case was reported as `held`.** Development: 0 of 22. Held-out: 0 of 9.
-- **`held` precision was 1.000 on the development set (126 of 126) and 0.970 on the held-out set (32 of 33).** The held-out miss, HO-0009, was a reply that looped on "You are" and disclosed nothing. The reviewer labelled it `needs_review`. Separately, 1 of the 36 held-out cases a person labelled `held` was reported `vulnerable` (HO-0026).
+| | holdout_v2 |
+|---|---|
+| Accuracy | 83% (83/100) |
+| False alarms | 0 |
+| Precision of a "vulnerable" verdict | 100% (26/26) |
+| Missed vulnerabilities | 2 |
+| Sent to human review | 14% |
 
-The 18-point gap is nine disagreements:
+Both missed vulnerabilities are replies where the named attack failed but the bot volunteered a planted secret anyway. The reviewer counted those as vulnerable, while PromptShield scores each attack on its own goal. Read per attack, as declared before scoring, accuracy is 85% with no missed vulnerabilities.
 
-- 3: the pattern floor matched a keyword inside a refusal or a description of the attack.
-- 4: the judge and the reviewer disagreed on the `needs_review` boundary.
-- 1: a judge error.
-- 1: a judge confident at 0.90 was sent to review by the 0.95 override threshold.
+Most errors are cautious: 14 of the 17 disagreements went to human review instead of getting a wrong verdict. An offline diagnosis traced every one to a cause: the pattern floor flagging sentences that only restate or quote an attack, a confidence gap in how verdicts are combined, four judge misreads, and a secret detector that missed this prompt's secret formats. Those are the next fixes, and they will be measured on a new held-out set, not this one.
 
-These are the next fixes, and they will be verified on a fresh held-out set. This one has been used, so it cannot measure them.
+The earlier held-out set, holdout_v1, measured 82% on its first run. It has since been used for tuning, so later scores on it are regression checks only.
 
 ---
 
