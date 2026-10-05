@@ -3,6 +3,6 @@
 # The promptshield engine is installed SEPARATELY from the repo root
 # (`pip install .`) so a fresh production environment works without the
 # editable-parent hack. See railway.json for the build command that does both.
-fastapi==0.141.1
-uvicorn==0.53.0
-python-dotenv==1.2.3
+fastapi==0.142.2
+uvicorn==0.54.0
+python-dotenv==1.2.4
