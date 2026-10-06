@@ -18,7 +18,7 @@ import pytest
 import scan
 from fastapi.testclient import TestClient
 from limits import Limiter
-from main import app
+from main import GENERIC_SCAN_ERROR, app
 from scan import (
     load_web_demo_attacks,
     run_ensemble_judging,
@@ -217,7 +217,9 @@ class TestScanStreamEndpoint:
         assert types[-1] == "error"
         assert "done" not in types
         error = events[-1]
-        assert "scan blew up" in error["message"]
+        # The client sees a fixed message; the exception text stays server-side.
+        assert error["message"] == GENERIC_SCAN_ERROR
+        assert "scan blew up" not in response.text
 
     def test_missing_system_prompt_is_422(self, client: TestClient) -> None:
         assert client.post("/api/scan/stream", json={}).status_code == 422
