@@ -69,7 +69,7 @@ Because PromptShield is itself a security tool, the scope is more specific than 
 ## Out of Scope
 
 - **False positives** (clean prompts flagged as vulnerable). These are detection-accuracy bugs / feature requests, not security issues. Open a regular issue with the prompt and the analyzer that fired.
-- **Performance / DoS on local CLI runs** against a target you control. PromptShield is a local CLI; if your scan hangs or spikes CPU on a target you control, that's a performance bug
+- **Performance / DoS on local CLI runs** against a target you control. If a CLI scan hangs or spikes CPU on a target you control, that's a performance bug. This does not cover the hosted web demo; see the note below
 - **Reports from automated scanners** with no manual validation or proof of exploitability
 - **Theoretical issues** without a working exploit against PromptShield's current code
 - **Vulnerabilities in the targets PromptShield scans**: those belong with the target's vendor, not here
@@ -129,7 +129,7 @@ API keys and credentials are:
 
 ### Local-First Operation
 
-PromptShield works fully offline once the attack library is downloaded. Cloud-based AI analyzers are optional and clearly indicated when used.
+The CLI can run offline only when both the target and the AI analyzer are local, for example a local model as the target and the Ollama analyzer on the same machine. Scanning a remote target or using a cloud AI analyzer (Anthropic, OpenAI, Google) needs network access, and the cloud analyzers are clearly indicated when used. The hosted web demo always calls cloud providers.
 
 ### Encrypted Transit
 

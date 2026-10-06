@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Security
 
-- **Web backend hardening.** Every response carries `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy` and HSTS. In production (`RAILWAY_ENVIRONMENT_NAME=production`, or `PROMPTSHIELD_ENV=production`) `/docs`, `/redoc` and `/openapi.json` are off, CORS allows only `FRONTEND_URL`, and CORS credentials are off. `system_prompt` has a 32,000 character schema ceiling and request bodies over 256 KiB get a 413. A failed scan now tells the client only that it failed; the exception detail goes to a server log line with the prompt and key values removed.
+- **Web backend hardening.** Every response carries `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy` and HSTS. In production, which is the default, `/docs`, `/redoc` and `/openapi.json` are off, CORS allows only `FRONTEND_URL`, and CORS credentials are off. `system_prompt` has a 32,000 character schema ceiling and request bodies over 256 KiB get a 413. A failed scan now tells the client only that it failed; the exception detail goes to a server log line with the prompt and key values removed. Development behaviour (the docs and the localhost CORS origins) turns on only with an explicit `PROMPTSHIELD_ENV=development`.
 - **Frontend headers.** `frontend/vercel.json` sends the same headers plus a Content-Security-Policy in Report-Only mode that allows the Railway API and Google Fonts.
 
 ## [0.6.0] - 2026-09-24
