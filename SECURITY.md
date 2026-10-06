@@ -77,7 +77,7 @@ Because PromptShield is itself a security tool, the scope is more specific than 
 - **Issues that require pre-existing privileged access** to the user's machine (root, write access to `site-packages`, etc.)
 - **Outdated dependency reports** with no exploit demonstrated against PromptShield's actual code paths
 
-This is a local CLI tool, not a hosted service, so there's no public demo to safe-harbor; testing against your own clone is always fine.
+PromptShield also runs as a hosted web demo. Testing against your own clone is always fine and is the preferred way to look for issues. Do not run automated or high-volume testing against the hosted demo: every scan there spends real provider credits. Report demo-specific issues through private vulnerability reporting as described above.
 
 ---
 
@@ -106,18 +106,26 @@ PromptShield's authors and contributors disclaim all liability for misuse of the
 
 PromptShield is built with the following security principles:
 
-### Zero Data Retention by Default
+### Where Your Data Goes
 
-Scans are not transmitted, logged, or stored anywhere unless the user explicitly enables logging or saves output. PromptShield does not phone home and does not include telemetry.
+PromptShield itself stores nothing. It has no database, does not keep prompts or scan results, does not phone home and does not include telemetry. The CLI writes a report only when you ask for one with `--output`.
 
-### Secret Handling
+Where the prompt and the target's replies travel depends on how you run it:
+
+- **CLI with local analyzers only** (the pattern analyzer, plus Ollama on your own machine if you enable it): the prompt and replies stay on your machine, apart from whatever you send to the target you chose to scan.
+- **CLI with cloud analyzers**: the attack, the target's reply and your system prompt are sent to the provider of each cloud analyzer you enable (Anthropic, OpenAI or Google) so it can judge the result. A hosted model used as the target also receives the prompt and attacks.
+- **Hosted web demo**: your prompt is sent to OpenAI, which runs the target model, and the prompt and the target's replies are sent to Anthropic and Google, which judge the scan.
+
+Each provider handles that data under its own terms and retention policy. PromptShield has no control over it.
+
+### Credential Handling
 
 API keys and credentials are:
 
-- Never logged or written to terminal output
-- Automatically redacted from JSON reports
+- Not written to terminal output
+- Redacted from JSON reports
 - Loaded from environment variables or `.env` files (preferred over command-line flags)
-- Never transmitted to any third party except the user-specified target
+- Sent only to the service they belong to: each AI provider's key goes to that provider, and target credentials go to the target you scan
 
 ### Local-First Operation
 
