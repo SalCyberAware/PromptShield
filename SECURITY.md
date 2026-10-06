@@ -34,7 +34,7 @@ PromptShield is pre-1.0. Security fixes are applied to the latest release on `ma
 
 | Version | Supported |
 |---------|-----------|
-| `main` / latest tagged release (currently 0.3.x) | ✅ |
+| `main` / latest tagged release (currently 0.6.x) | ✅ |
 | Tagged releases prior to the latest | ❌ |
 
 Users should always run the latest release.
@@ -52,32 +52,32 @@ Because PromptShield is itself a security tool, the scope is more specific than 
 
 ### False-negative reports
 
-- **Known-bad payloads** — particularly those from public sources (cite the paper, OWASP LLM Top 10 entry, MITRE ATLAS technique, or blog post) — that PromptShield's attack library or analyzers fail to flag
+- **Known-bad payloads**, particularly those from public sources (cite the paper, OWASP LLM Top 10 entry, MITRE ATLAS technique, or blog post), that PromptShield's attack library or analyzers fail to flag
 - Gaps in OWASP LLM Top 10 / MITRE ATLAS coverage where a category is claimed but no working attack exists for it
 
 ### Safety issues in the scanner itself
 
 - **Regular-expression denial of service** (catastrophic backtracking) on crafted scanner input or crafted target responses
 - **Code injection** via the input parser, attack-library YAML loader, report templates, or CLI argument handling
-- **Information disclosure** via error messages — leaking absolute file paths, environment variables, `.env` contents, API keys, or other secrets into terminal output, JSON reports, HTML reports, or stack traces
-- **Insecure file handling** — path traversal, arbitrary write, or zip-slip-style issues when reading attacks/data or writing reports
+- **Information disclosure** via error messages: leaking absolute file paths, environment variables, `.env` contents, API keys, or other secrets into terminal output, JSON reports, HTML reports, or stack traces
+- **Insecure file handling**: path traversal, arbitrary write, or zip-slip-style issues when reading attacks/data or writing reports
 - **TLS / transport issues** in the API scanner (e.g., the User-Agent or auth header leaking via misconfigured retries/redirects)
-- **Supply chain issues** — known-exploitable vulnerabilities in the pinned dependencies (`click`, `httpx`, `tenacity`, `anthropic`, `openai`, `playwright`, `jinja2`, `pyyaml`, `cryptography`, etc.) with a working exploit against PromptShield's usage
+- **Supply chain issues**: known-exploitable vulnerabilities in the pinned dependencies (`click`, `httpx`, `tenacity`, `anthropic`, `openai`, `playwright`, `jinja2`, `pyyaml`, `cryptography`, etc.) with a working exploit against PromptShield's usage
 
 ---
 
 ## Out of Scope
 
-- **False positives** (clean prompts flagged as vulnerable) — these are detection-accuracy bugs / feature requests, not security issues. Open a regular issue with the prompt and the analyzer that fired.
-- **Performance / DoS on local CLI runs** against a target you control — PromptShield is a local CLI; if your scan hangs or spikes CPU on a target you control, that's a performance bug
+- **False positives** (clean prompts flagged as vulnerable). These are detection-accuracy bugs / feature requests, not security issues. Open a regular issue with the prompt and the analyzer that fired.
+- **Performance / DoS on local CLI runs** against a target you control. PromptShield is a local CLI; if your scan hangs or spikes CPU on a target you control, that's a performance bug
 - **Reports from automated scanners** with no manual validation or proof of exploitability
 - **Theoretical issues** without a working exploit against PromptShield's current code
-- **Vulnerabilities in the targets PromptShield scans** — those belong with the target's vendor, not here
-- **Issues in third-party AI providers** (Anthropic, OpenAI, Ollama, etc.) — report those to the provider
+- **Vulnerabilities in the targets PromptShield scans**: those belong with the target's vendor, not here
+- **Issues in third-party AI providers** (Anthropic, OpenAI, Ollama, etc.): report those to the provider
 - **Issues that require pre-existing privileged access** to the user's machine (root, write access to `site-packages`, etc.)
 - **Outdated dependency reports** with no exploit demonstrated against PromptShield's actual code paths
 
-This is a local CLI tool, not a hosted service, so there's no public demo to safe-harbor — testing against your own clone is always fine.
+This is a local CLI tool, not a hosted service, so there's no public demo to safe-harbor; testing against your own clone is always fine.
 
 ---
 
@@ -125,21 +125,29 @@ PromptShield works fully offline once the attack library is downloaded. Cloud-ba
 
 ### Encrypted Transit
 
-All API calls use TLS 1.3 minimum. PromptShield will refuse to scan targets over plain HTTP unless explicitly overridden.
+Calls to the hosted AI providers (Anthropic, OpenAI, Google) go over HTTPS through each provider's official SDK, using that SDK's default TLS settings. PromptShield does not yet enforce a minimum TLS version of its own, and it does not refuse plain HTTP. For example, the optional Ollama analyzer talks to a local host over `http://` by default. Refusing plain HTTP targets is not implemented yet.
 
 ### Supply Chain
 
 - All dependencies are pinned to specific versions in `pyproject.toml`
 - Dependencies are reviewed for known vulnerabilities
-- The attack library is signed and version-controlled
+- The attack library is version-controlled in this repository. It is not cryptographically signed; signing is not implemented yet.
 
 ### Adversarial Resistance
 
 PromptShield includes built-in protections against being weaponized:
 
-- Tool-level rate limiting prevents bulk-scanning thousands of targets
 - Documentation emphasizes defensive use cases
-- Responsible disclosure templates are included
+
+Not implemented yet: the CLI has no tool-level rate limiting or cap on the number of targets, and responsible disclosure templates are not included (see below).
+
+### API Key Handling
+
+- Anthropic API keys are loaded only from environment variables. They are never committed to the repository: CI runs gitleaks over the full git history, and GitHub push protection is enabled.
+- Production uses a dedicated service-account key in its own workspace, with a monthly spend cap.
+- Development uses a separate key, also with a spend cap.
+- Both keys have an expiry date and are rotated before they expire.
+- OpenAI and Google API keys are loaded the same way, from environment variables only. Spend caps and scheduled rotation for those keys are planned but not in place yet.
 
 ---
 
@@ -173,4 +181,4 @@ PromptShield's security architecture aligns with:
 
 This security policy may be updated as PromptShield matures. Material changes will be announced in the project changelog.
 
-Last updated: 2026-05-27
+Last updated: 2026-10-05
