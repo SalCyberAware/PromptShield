@@ -70,17 +70,14 @@ _DEV_ORIGINS = [
 
 
 def is_production() -> bool:
-    """Whether this process is the deployed production service.
+    """Whether this process runs in production mode.
 
-    ``PROMPTSHIELD_ENV`` is an explicit override (``production`` or anything
-    else). Without it, Railway's ``RAILWAY_ENVIRONMENT_NAME`` decides, which
-    Railway sets on every deployment. Neither is set in local development or
-    tests, so those default to non-production.
+    Production is the default. Development behaviour (the interactive docs,
+    the localhost CORS origins, CORS credentials) turns on only when
+    ``PROMPTSHIELD_ENV=development`` is set explicitly, so a deploy with a
+    missing or misspelled setting fails closed.
     """
-    explicit = os.getenv("PROMPTSHIELD_ENV")
-    if explicit:
-        return explicit.strip().lower() == "production"
-    return os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower() == "production"
+    return os.getenv("PROMPTSHIELD_ENV", "").strip().lower() != "development"
 
 
 def cors_origins(production: bool) -> list[str]:

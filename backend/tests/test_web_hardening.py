@@ -115,27 +115,58 @@ def test_development_cors_still_allows_localhost(dev_client: TestClient) -> None
 
 
 @pytest.mark.parametrize(
-    ("explicit", "railway", "expected"),
+    ("env", "expected"),
     [
-        (None, None, False),
-        (None, "production", True),
-        (None, "staging", False),
-        ("production", None, True),
-        ("development", "production", False),
+        (None, True),
+        ("", True),
+        ("production", True),
+        ("staging", True),
+        ("develop", True),
+        ("development", False),
+        (" Development ", False),
     ],
 )
-def test_is_production(
-    monkeypatch: pytest.MonkeyPatch,
-    explicit: str | None,
-    railway: str | None,
-    expected: bool,
+def test_is_production_defaults_to_production(
+    monkeypatch: pytest.MonkeyPatch, env: str | None, expected: bool
 ) -> None:
-    if explicit is not None:
-        monkeypatch.setenv("PROMPTSHIELD_ENV", explicit)
-    if railway is not None:
-        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", railway)
+    if env is not None:
+        monkeypatch.setenv("PROMPTSHIELD_ENV", env)
 
     assert is_production() is expected
+
+
+def test_railway_environment_name_does_not_turn_on_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+
+    assert is_production() is True
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_default_app_has_docs_off(path: str) -> None:
+    assert TestClient(create_app()).get(path).status_code == 404
+
+
+def test_default_app_rejects_localhost_cors() -> None:
+    response = TestClient(create_app()).options(
+        "/api/scan/stream",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert "access-control-allow-origin" not in response.headers
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_development_flag_turns_docs_on(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setenv("PROMPTSHIELD_ENV", "development")
+
+    assert TestClient(create_app()).get(path).status_code == 200
 
 
 # ── Size limits ───────────────────────────────────────────────────────────────
