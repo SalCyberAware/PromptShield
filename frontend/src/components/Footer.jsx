@@ -8,7 +8,7 @@ export default function Footer() {
         <span className="ps-footer__sep" aria-hidden="true">
           /
         </span>
-        <span>Zero data retention</span>
+        <span>Prompts not stored; sent to the AI providers that run and judge the scan</span>
         <span className="ps-footer__sep" aria-hidden="true">
           /
         </span>
