@@ -789,9 +789,10 @@ class TestScanStreamLimits:
         assert capped.status_code == 503
         assert "capacity" in capped.json()["detail"]
 
-    def test_x_forwarded_for_is_honored(
+    def test_x_forwarded_for_is_honored_outside_production(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("PROMPTSHIELD_ENV", "development")
         monkeypatch.setattr(main, "limiter", Limiter(ip_rate=1, daily_cap=100))
         monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
 
@@ -1156,3 +1157,114 @@ class TestEnsembleWithAnUncertainJudge:
         verdicts = asyncio.run(run_ensemble_judging(_scan_with_responses([(aid, "reply")])))
         assert verdicts[aid][0]["verdict"] == "uncertain"
         assert verdicts[aid][0]["vulnerable"] is None
+
+
+# ── Rate-limit client key (X-Real-IP in production) ─────────────────────────────
+
+_PEER = "198.51.100.9"  # the TestClient socket peer in these tests
+
+
+class _RecordingLimiter(Limiter):
+    """A real Limiter that also records the key each request was counted under."""
+
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        self.keys: list[str] = []
+
+    def check_and_consume(self, prompt: str, ip: str) -> None:
+        self.keys.append(ip)
+        super().check_and_consume(prompt, ip)
+
+
+class TestRateLimitClientKey:
+    @pytest.fixture
+    def peer_client(self) -> TestClient:
+        return TestClient(app, client=(_PEER, 50000))
+
+    @pytest.fixture
+    def recorder(self, monkeypatch: pytest.MonkeyPatch) -> _RecordingLimiter:
+        limiter = _RecordingLimiter(ip_rate=5, ip_window_seconds=300)
+        monkeypatch.setattr(main, "limiter", limiter)
+        monkeypatch.setattr(main, "run_web_scan", _fake_run_web_scan_factory())
+        return limiter
+
+    def _post(self, client: TestClient, headers: dict[str, str]):
+        return client.post(
+            "/api/scan/stream", json={"system_prompt": "You are a bot."}, headers=headers
+        )
+
+    def test_valid_x_real_ip_is_the_key(
+        self, peer_client: TestClient, recorder: _RecordingLimiter
+    ) -> None:
+        response = self._post(peer_client, {"X-Real-IP": "203.0.113.8"})
+
+        assert response.status_code == 200
+        assert recorder.keys == ["203.0.113.8"]
+
+    def test_ipv6_x_real_ip_is_grouped_by_56(
+        self, peer_client: TestClient, recorder: _RecordingLimiter
+    ) -> None:
+        self._post(peer_client, {"X-Real-IP": "2001:db8:abcd:12ff::1"})
+        self._post(peer_client, {"X-Real-IP": "2001:db8:abcd:1200:ffff::2"})
+
+        assert recorder.keys == ["2001:db8:abcd:1200::/56"] * 2
+
+    def test_spoofed_forwarded_for_shares_one_bucket_and_6th_gets_429(
+        self, peer_client: TestClient, recorder: _RecordingLimiter
+    ) -> None:
+        statuses = [
+            self._post(
+                peer_client,
+                {"X-Real-IP": "203.0.113.8", "X-Forwarded-For": f"192.0.2.{n}"},
+            ).status_code
+            for n in range(1, 7)
+        ]
+
+        assert statuses == [200] * 5 + [429]
+        assert set(recorder.keys) == {"203.0.113.8"}
+
+    def test_different_x_real_ip_values_get_separate_buckets(
+        self, peer_client: TestClient, recorder: _RecordingLimiter
+    ) -> None:
+        for _ in range(5):
+            assert self._post(peer_client, {"X-Real-IP": "203.0.113.8"}).status_code == 200
+        assert self._post(peer_client, {"X-Real-IP": "203.0.113.8"}).status_code == 429
+
+        assert self._post(peer_client, {"X-Real-IP": "203.0.113.9"}).status_code == 200
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {},
+            {"X-Real-IP": ""},
+            {"X-Real-IP": "not-an-ip"},
+            {"X-Real-IP": "203.0.113.8, 203.0.113.9"},
+        ],
+        ids=["missing", "empty", "non-ip", "list"],
+    )
+    def test_missing_or_invalid_x_real_ip_falls_back_to_peer_not_forwarded_for(
+        self,
+        peer_client: TestClient,
+        recorder: _RecordingLimiter,
+        headers: dict[str, str],
+    ) -> None:
+        response = self._post(peer_client, {**headers, "X-Forwarded-For": "192.0.2.1"})
+
+        assert response.status_code == 200
+        assert recorder.keys == [_PEER]
+
+    def test_outside_production_keeps_leftmost_forwarded_for(
+        self,
+        peer_client: TestClient,
+        recorder: _RecordingLimiter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PROMPTSHIELD_ENV", "development")
+
+        self._post(
+            peer_client,
+            {"X-Real-IP": "203.0.113.8", "X-Forwarded-For": "192.0.2.1, 10.0.0.1"},
+        )
+        self._post(peer_client, {"X-Real-IP": "203.0.113.8"})
+
+        assert recorder.keys == ["192.0.2.1", _PEER]
