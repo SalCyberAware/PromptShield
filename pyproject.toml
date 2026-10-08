@@ -39,7 +39,7 @@ dependencies = [
     "jinja2>=3.1.4,<4",           # HTML report rendering and autoescape: a major can change both
     "pyyaml>=6.0.1,<7",           # attack library and benchmark loading
     "cryptography>=42.0.0,<51",   # declared but not imported by the package; majors drop platforms/OpenSSL
-    "python-dotenv>=1.0.0,<2",    # .env key loading: a major can change lookup/override rules
+    "python-dotenv>=1.2.4,<2",    # .env key loading: a major can change lookup/override rules
 ]
 
 [project.optional-dependencies]
