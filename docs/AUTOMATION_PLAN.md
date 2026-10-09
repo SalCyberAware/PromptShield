@@ -315,7 +315,7 @@ Automation may *report* on these areas. It may never open a PR that changes them
 - **Secrets.** Key names, key rotation, environment variable wiring, `.env.example` contents.
 - **Database schema.** SOCTriage's SQLAlchemy models and any migration. A schema change that goes
   out unreviewed against a production database is not recoverable by reverting the commit.
-- **Production configuration.** `Dockerfile`, `.dockerignore`, `railway.json`, `Procfile`, `runtime.txt`, Vercel project settings,
+- **Production configuration.** `railway.json`, `Procfile`, `runtime.txt`, Vercel project settings,
   CORS origins, build commands.
 - **Deploy pipelines.** The workflows themselves, and anything that changes when or how a deploy fires.
 - **PromptShield's honesty and verdict logic.** Specifically `backend/scan.py` and
