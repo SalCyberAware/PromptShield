@@ -124,18 +124,64 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          # The lock's --python-version (backend/requirements.txt header), which
+          # /api/health confirms is what Railway runs.
+          python-version: "3.12"
           cache: "pip"
-      - name: Install promptshield from repo root (the production way)
+      # The production way: the hashed lock first, then the engine with
+      # --no-deps so none of its dependencies is resolved outside the lock.
+      - name: Install the production lock, then promptshield without dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .
-      - name: Install backend web + test dependencies
-        run: pip install -r backend/requirements-dev.txt
+          pip install --require-hashes -r requirements.txt
+          pip install --no-deps .
+          pip check
+      - name: Install backend test dependencies from the dev lock
+        run: pip install --require-hashes -r backend/requirements-dev.txt
       - name: Run backend tests
         run: |
           cd backend
           python -m pytest tests -v
+
+  # Installs ONLY what Railway installs, in a fresh venv: the root
+  # requirements.txt (which includes the hashed backend lock), then the engine
+  # with --no-deps. Proves the lock installs on Linux, that the engine's
+  # dependencies all come from it and satisfy pyproject.toml's ranges (pip
+  # check), that the app sees exactly the lock's versions (what /api/health
+  # reports as dependencies_locked), and that the locks still match their .in
+  # files. Required by the main ruleset.
+  hashed-production-install:
+    name: Hashed production install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # pip is not upgraded first: Railway does not either.
+      - name: Install exactly what Railway installs
+        run: |
+          python -m venv "$RUNNER_TEMP/prod"
+          "$RUNNER_TEMP/prod/bin/pip" install -r requirements.txt
+          "$RUNNER_TEMP/prod/bin/pip" install --no-deps .
+      - name: Check the installed set matches the lock
+        working-directory: backend
+        run: |
+          "$RUNNER_TEMP/prod/bin/pip" check
+          "$RUNNER_TEMP/prod/bin/python" -c "import main; print('python', main.PYTHON_VERSION, 'dependencies_locked', main.DEPENDENCIES_LOCKED); assert main.DEPENDENCIES_LOCKED, 'installed packages differ from backend/requirements.txt'"
+      # uv keeps the pins already in an output file, so recompiling an
+      # unchanged .in file reproduces the lock byte for byte. A diff means a .in
+      # file changed without regenerating, or a lock was edited by hand. uv is
+      # pinned so its output format cannot change underneath the check.
+      - name: Check the locks still match their .in files
+        working-directory: backend
+        run: |
+          python -m pip install uv==0.12.18
+          uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --quiet --custom-compile-command "uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt" -o requirements.txt
+          uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --quiet --custom-compile-command "uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes -o requirements-dev.txt" -o requirements-dev.txt
+          git diff --exit-code -- requirements.txt requirements-dev.txt
   frontend:
     name: Frontend (lint + build + tests)
     runs-on: ubuntu-latest

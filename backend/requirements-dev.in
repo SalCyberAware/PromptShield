@@ -1,0 +1,6 @@
+# The production lock, so dev tools share its versions of anything in common.
+-c requirements.txt
+-r requirements.in
+pytest>=9.1.1,<10  # gates CI
+pytest-cov>=7.1.0,<8  # gates CI
+httpx>=0.28.1,<0.29  # gates CI: TestClient; 0.x breaks on minors

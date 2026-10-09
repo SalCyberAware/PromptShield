@@ -112,6 +112,33 @@ promptshield library list                     # browse the attack library
 promptshield scan https://your-endpoint ...   # run a scan
 ```
 
+### Backend dependencies and the lock
+
+The deployed web service installs exact, hash-checked versions:
+
+| File | What it is |
+|------|------------|
+| `backend/requirements.in` | The service's runtime ranges, including the engine's own dependencies. Edit this one. |
+| `backend/requirements.txt` | The lock compiled from it: every package pinned with sha256 hashes. Railway installs it through the root `requirements.txt`, then installs the engine with `pip install --no-deps .`. |
+| `backend/requirements-dev.in` / `requirements-dev.txt` | Backend test tools, constrained to the lock. |
+
+`pyproject.toml` still holds the ranges the published package promises its
+users, and the library test matrix installs from those. When you add or change
+an engine dependency, change it in both `pyproject.toml` and
+`backend/requirements.in`; CI's `pip check` fails if the lock falls outside
+pyproject's ranges or misses a dependency. Then regenerate both locks from
+`backend/` with uv 0.12.18, the version CI pins:
+
+```bash
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes -o requirements-dev.txt
+```
+
+Never edit a lock by hand: the **Hashed production install** CI job fails when
+a lock no longer matches its `.in` file. `/api/health` reports
+`dependencies_locked: true` only when the running process has exactly the
+lock's versions.
+
 ### Development Standards
 
 - **Python version:** 3.11+ (CI runs the matrix on 3.11, 3.12, and 3.13)

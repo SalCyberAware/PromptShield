@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import sys
 from collections.abc import AsyncIterator
 
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from limits import LimitRejectedError, build_limiter
+from lockcheck import dependencies_locked
 from pydantic import BaseModel, Field
 from scan import (
     WEB_DEMO_ATTACK_IDS,
@@ -268,6 +270,15 @@ def _build_commit() -> str:
     )
 
 
+# The running interpreter's major.minor, which the lock's --python-version
+# should match. A deploy that drifts from it shows here first.
+PYTHON_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+# Whether the installed packages match backend/requirements.txt exactly. Worked
+# out once at startup: what is installed does not change while the process runs.
+DEPENDENCIES_LOCKED = dependencies_locked()
+
+
 @router.get("/api/health")
 def health() -> dict[str, object]:
     return {
@@ -278,6 +289,10 @@ def health() -> dict[str, object]:
         # the commit that was just pushed. See docs/AUTOMATION_PLAN.md.
         "commit": _build_commit(),
         "providers": _provider_readiness(),
+        # Runtime identity: which Python, and whether the installed packages
+        # are exactly the lock's. A boolean only; versions are not listed.
+        "python": PYTHON_VERSION,
+        "dependencies_locked": DEPENDENCIES_LOCKED,
     }
 
 

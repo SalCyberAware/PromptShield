@@ -38,8 +38,13 @@ updates:
   # and installed by users; backend/ is the deployed web service. They pin
   # overlapping packages for different reasons, so a bump that is right for one
   # is not automatically right for the other.
+  #
+  # The root requirements.txt is only Railway's pointer at the backend lock, so
+  # it is excluded here: the backend entry below owns that lock.
   - package-ecosystem: "pip"
     directory: "/"
+    exclude-paths:
+      - "requirements.txt"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -59,8 +64,13 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
-  # ── Python: the deployed web backend (requirements*.txt) ──────────────────
-  - package-ecosystem: "pip"
+  # ── Python: the deployed web backend (uv-compiled hashed locks) ───────────
+  # requirements.in and requirements-dev.in hold the ranges; requirements.txt
+  # and requirements-dev.txt are hashed locks compiled from them with
+  # `uv pip compile --universal --generate-hashes`. The "uv" ecosystem, not
+  # "pip", because it reruns that same command with the flags read back from
+  # each lock's header, so a bump keeps the hashes and the universal markers.
+  - package-ecosystem: "uv"
     directory: "/backend"
     schedule:
       interval: "weekly"
