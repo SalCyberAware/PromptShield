@@ -1,0 +1,23 @@
+# An allowlist: the build context is the whole repo, which also holds the
+# frontend, docs, tests, local scan output and a .env, so everything is
+# excluded and only what the API image needs is let back in.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!promptshield/
+!backend/main.py
+!backend/scan.py
+!backend/limits.py
+!backend/lockcheck.py
+!backend/requirements.txt
+!backend/build-requirements.txt
+
+# Never in the image, even inside an allowed folder. The evaluation data is
+# the labelled benchmark, the spent holdouts and the score baseline: the API
+# never reads them, and they stay out of anything that ships.
+**/.env
+**/.env.*
+**/__pycache__/
+**/*.pyc
+promptshield/evaluation/data/

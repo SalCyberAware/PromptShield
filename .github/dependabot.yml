@@ -113,6 +113,26 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
+  # ── Docker base image (root Dockerfile, the deployed backend) ─────────────
+  # The base image is pinned by digest, which goes stale silently as Debian
+  # and Python ship security fixes. This proposes the new digest for the same
+  # tag. The Python minor is held: moving off 3.12 means recompiling the locks
+  # with a new --python-version, which is a planned change, not a bot bump.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "backend"]
+    commit-message:
+      prefix: "build(deps)"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
   # ── GitHub Actions ────────────────────────────────────────────────────────
   # Monthly, per the plan. A pinned action version goes stale silently: nothing
   # in CI fails when actions/checkout@v6 becomes two majors old, so the only
