@@ -3,6 +3,8 @@
 Drives the FastAPI app through TestClient. The autouse ``_clear_provider_env_vars``
 fixture in backend/conftest.py keeps the providers readiness map deterministic.
 """
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 from main import app
@@ -94,4 +96,14 @@ def test_health_keeps_existing_fields_alongside_commit(client: TestClient) -> No
     """The uptime monitor reads status/service/version — adding commit is additive."""
     body = client.get("/api/health").json()
 
-    assert set(body) == {"status", "service", "version", "commit", "providers"}
+    assert set(body) == {
+        "status", "service", "version", "commit", "providers",
+        "python", "dependencies_locked",
+    }
+
+
+def test_health_reports_python_major_minor_and_lock_state(client: TestClient) -> None:
+    body = client.get("/api/health").json()
+
+    assert body["python"] == f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert isinstance(body["dependencies_locked"], bool)

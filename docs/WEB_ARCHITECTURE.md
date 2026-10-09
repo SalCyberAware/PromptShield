@@ -194,7 +194,9 @@ PromptShield/
 │   ├── limits.py        # rate limiting, length cap, budget cap (Phase 1)
 │   ├── conftest.py
 │   ├── pytest.ini
-│   ├── requirements.txt
+│   ├── requirements.in  # production dependency ranges (edit this)
+│   ├── requirements.txt # hashed lock compiled from requirements.in
+│   ├── requirements-dev.in / requirements-dev.txt  # test tools, constrained to the lock
 │   └── tests/
 ├── frontend/            # React + Vite
 │   ├── src/
@@ -355,10 +357,15 @@ Frontend env: `VITE_API_URL` → the Railway backend URL.
 - **test** — pytest matrix on Python 3.11 / 3.12 / 3.13 (+ Codecov on 3.13). *(3 jobs)*
 - **lint** — `ruff check promptshield/ tests/`.
 - **typecheck** — `mypy promptshield/` (strict).
-- **backend** — clean **production** install (`pip install .` from repo root, then
+- **backend**: clean **production** install (the hashed lock through the root
+  `requirements.txt`, then `pip install --no-deps .` and `pip check`, then
   `backend/requirements-dev.txt`) followed by `pytest backend/tests`. This is the
   gate that proves the web wrapper works against the packaged engine, not an
   editable-parent tree.
+- **Hashed production install**: exactly what Railway installs, in a fresh
+  venv: the lock, then the engine with `--no-deps`. Runs `pip check`, confirms
+  the installed versions are the lock's, and fails if a lock no longer matches
+  its `.in` file.
 - **frontend** — `npm ci`, `npm run lint`, `npm run build`, then `npm test`
   (Vitest + React Testing Library) in `frontend/`.
 

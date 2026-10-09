@@ -1,0 +1,9 @@
+# Production install entry point for Railway. Do not edit: the lock is
+# backend/requirements.txt, compiled from backend/requirements.in.
+#
+# Railway runs `pip install -r requirements.txt` from the repo root, so this
+# line makes the build install the hashed lock (pip turns hash checking on by
+# itself for a file with hashes) before anything else. The engine is then
+# installed with `pip install --no-deps .` (railway.json), so every dependency
+# it has comes from the lock and none is resolved fresh.
+-r backend/requirements.txt

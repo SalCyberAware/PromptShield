@@ -47,16 +47,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
 
-      # The engine and the web wrapper are installed as two separate things in
-      # production (`pip install .` then `pip install -r backend/requirements.txt`,
-      # see railway.json), so they are audited as two separate things here.
-      # Two steps rather than two jobs: the step name is enough to identify which
-      # tree is dirty, and the setup cost is paid once.
+      # Two different trees. The package's own ranges (what a user installing
+      # promptshield gets) are resolved and audited from pyproject.toml.
+      # Production installs the hashed lock backend/requirements.txt, which
+      # names every package it runs, so that one is audited pin for pin with
+      # --disable-pip (--require-hashes is what a hashed file needs to be read
+      # that way). Two steps rather than two jobs: the step name is enough to
+      # identify which tree is dirty, and the setup cost is paid once.
       - name: Audit the root package dependency tree
         run: pip-audit . --progress-spinner off
 
-      - name: Audit backend/requirements.txt
-        run: pip-audit -r backend/requirements.txt --progress-spinner off
+      - name: Audit the production lock (backend/requirements.txt)
+        run: pip-audit -r backend/requirements.txt --require-hashes --disable-pip --progress-spinner off
 
   npm-audit:
     name: npm audit (frontend production tree)
