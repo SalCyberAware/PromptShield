@@ -200,6 +200,19 @@ jobs:
           echo "DECOY=1" > .env
           echo "DECOY=1" > backend/.env
 
+      # Docker Hub rate-limits anonymous pulls per address, and shared runners
+      # share addresses, so the base image pull can fail with 429. Google's
+      # public Docker Hub mirror serves the same images. The Dockerfile pins the
+      # base by digest, so the mirror can only supply that exact image or the
+      # build fails. The runner's existing daemon settings are kept.
+      - name: Pull Docker Hub images through mirror.gcr.io
+        run: |
+          cfg=/etc/docker/daemon.json
+          current=$(sudo cat "$cfg" 2>/dev/null || echo '{}')
+          echo "$current" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$cfg" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{json .RegistryConfig.Mirrors}}'
+
       - name: Build the image
         run: docker build --pull -t promptshield-api:ci .
 
