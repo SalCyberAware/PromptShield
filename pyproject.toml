@@ -47,7 +47,7 @@ dev = [
     "pytest>=8.0.0,<10",          # gates CI
     "pytest-asyncio>=1.4.0,<2",  # gates CI: async test mode
     "pytest-cov>=5.0.0,<8",       # gates CI
-    "black>=24.0.0",
+    "black>=26.10.0",
     "ruff>=0.16.8,<0.17",         # gates CI; 0.x adds rules on minors
     "mypy>=1.10.0,<3",            # gates CI (strict)
 ]
