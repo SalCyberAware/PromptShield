@@ -174,6 +174,15 @@ Provider keys live server side only and are never sent to the browser. The backe
 
 Full design, including the locked decisions behind the 13-attack set and the judge configuration: [docs/WEB_ARCHITECTURE.md](docs/WEB_ARCHITECTURE.md).
 
+**Running the backend in Docker.** The root `Dockerfile` is what Railway builds, and it runs anywhere Docker does. It installs the hashed lock, builds the engine with a pinned build backend, runs as an unprivileged user and listens on `PORT` (8080 if unset):
+
+```bash
+docker build -t promptshield-api .
+docker run -p 8080:8080 --env-file backend/.env promptshield-api
+```
+
+Provider keys are read at runtime from the environment. None is baked into the image, and `.dockerignore` keeps `.env` files, tests and the evaluation data out of the build.
+
 **Testing:** 315 tests (245 for the package, 70 for the backend) across 6 CI jobs: a pytest matrix on Python 3.11, 3.12, and 3.13, plus ruff, mypy strict, and a backend job that installs the package the production way before running the web tests. All API calls are mocked, so the suite costs nothing and does not touch the network.
 
 ---
