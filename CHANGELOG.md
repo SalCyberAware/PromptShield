@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- `backend/runtime.txt` now names Python 3.12.7 instead of 3.11.9. Railway builds this service from the repo root and never read the file, and production runs 3.12 (reported by `/api/health`), but Dependabot's uv updater reads it as the project's Python. It now agrees with the lock header's `--python-version 3.12`.
 - **`promptshield` reads `backend/.env` as well as the root `.env`**, in the seed script's order. It read the root file only, so a Gemini key kept in `backend/.env` was invisible to `eval` and a live run went out with no fallback judge.
 
 ### Security
