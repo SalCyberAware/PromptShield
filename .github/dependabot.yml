@@ -118,6 +118,12 @@ updates:
   # and Python ship security fixes. This proposes the new digest for the same
   # tag. The Python minor is held: moving off 3.12 means recompiling the locks
   # with a new --python-version, which is a planned change, not a bot bump.
+  #
+  # The image comes from public.ecr.aws/docker/library, Amazon's public mirror
+  # of Docker Hub's official images. Dependabot reads that registry from the
+  # FROM line and lists its tags anonymously; no registry credentials are
+  # needed. It names the dependency by its path there (docker/library/python),
+  # so the ignore rule matches any name ending in "python".
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -130,7 +136,7 @@ updates:
     commit-message:
       prefix: "build(deps)"
     ignore:
-      - dependency-name: "python"
+      - dependency-name: "*python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # ── GitHub Actions ────────────────────────────────────────────────────────
