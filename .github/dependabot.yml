@@ -63,6 +63,12 @@ updates:
       package-security-advisories:
         applies-to: security-updates
         patterns: ["*"]
+    # google-genai (>=2.28.0 is required here) caps tenacity<9.2.0, so a
+    # tenacity 9.2+ bump cannot resolve and the whole update job fails. Remove
+    # this rule once google-genai lifts that cap.
+    ignore:
+      - dependency-name: "tenacity"
+        versions: [">=9.2.0"]
 
   # ── Python: the deployed web backend (uv-compiled hashed locks) ───────────
   # requirements.in and requirements-dev.in hold the ranges; requirements.txt
@@ -90,6 +96,12 @@ updates:
       backend-security-advisories:
         applies-to: security-updates
         patterns: ["*"]
+    # google-genai (>=2.28.0 is required here) caps tenacity<9.2.0, so a
+    # tenacity 9.2+ bump cannot resolve and the whole update job fails. Remove
+    # this rule once google-genai lifts that cap.
+    ignore:
+      - dependency-name: "tenacity"
+        versions: [">=9.2.0"]
 
   # ── Frontend (npm) ────────────────────────────────────────────────────────
   - package-ecosystem: "npm"
