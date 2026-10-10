@@ -143,6 +143,11 @@ updates:
   # Monthly, per the plan. A pinned action version goes stale silently: nothing
   # in CI fails when actions/checkout@v6 becomes two majors old, so the only
   # thing that surfaces it is a bot that reads the workflow files.
+  #
+  # Every `uses:` is pinned to a full commit SHA with the exact version as a
+  # trailing comment (`@<sha> # v7.0.1`), so a moved tag cannot change what
+  # runs. Dependabot reads that comment and updates the SHA and the comment
+  # together, which keeps the pins current.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
