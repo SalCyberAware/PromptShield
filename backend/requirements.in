@@ -10,7 +10,7 @@
 # CI runs `pip check` so the lock can never drift outside pyproject's ranges.
 
 # Web wrapper.
-fastapi==0.142.2
+fastapi==0.142.4
 uvicorn==0.54.0
 python-dotenv==1.2.4
 
