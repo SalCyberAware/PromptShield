@@ -49,7 +49,7 @@ dev = [
     "pytest-cov>=5.0.0,<8",       # gates CI
     "black>=26.10.0",
     "ruff>=0.16.10,<0.17",         # gates CI; 0.x adds rules on minors
-    "mypy>=1.10.0,<3",            # gates CI (strict)
+    "mypy>=2.4.0,<3",            # gates CI (strict)
 ]
 
 [project.urls]
