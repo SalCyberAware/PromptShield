@@ -1,0 +1,58 @@
+name: Base image watch
+
+# Weekly check that the base images this repo pins by digest still match what
+# their tags point at. It asks the registry about the exact image:tag pins in
+# the Dockerfiles and in workflow image: lines, one lookup each. Dependabot's
+# docker job pages through every tag of an image instead, and keeps failing
+# with public.ecr.aws rate limits (429).
+#
+# When a tag has moved, it opens an issue "Base image update: <image:tag>", or
+# comments on the open one if the digest has moved again since it last
+# reported. It never changes files or opens pull requests. The logic is in
+# .github/scripts/base-image-watch.sh, which also runs locally and has a
+# --self-test mode that needs no network.
+
+on:
+  schedule:
+    # Thursdays 07:30 UTC. A scheduled run is always a real run.
+    - cron: "30 7 * * 4"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: print what would happen and create nothing"
+        type: boolean
+        default: true
+
+permissions: {}
+
+# Two runs at once could both open the same issue.
+concurrency:
+  group: base-image-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check pinned base image digests
+    runs-on: ubuntu-latest
+    # Each lookup can wait up to 3.5 minutes across its retries.
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out and read the Dockerfiles and workflow files
+      issues: write # open or comment on "Base image update" issues, create their two labels if missing
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Self-test (no network)
+        run: bash .github/scripts/base-image-watch.sh --self-test
+
+      - name: Compare pins with the registry
+        env:
+          # "false" only for a scheduled run or a manual run with dry_run off.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          LOOKUP_TOOL: docker
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/base-image-watch.sh
