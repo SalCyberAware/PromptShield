@@ -1,0 +1,3 @@
+# base-image-watch.sh runs under bash on the Actions runner and in Git Bash,
+# neither of which can run a script with CRLF line endings.
+*.sh text eol=lf
