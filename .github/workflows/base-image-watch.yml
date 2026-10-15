@@ -52,7 +52,6 @@ jobs:
         env:
           # "false" only for a scheduled run or a manual run with dry_run off.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-          LOOKUP_TOOL: docker
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash .github/scripts/base-image-watch.sh
