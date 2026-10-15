@@ -48,7 +48,11 @@ ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribu
 # host here, so a registry cannot send the token request anywhere else.
 declare -A TOKEN_HOSTS=([registry-1.docker.io]=auth.docker.io)
 REALM_RE='^https://([A-Za-z0-9.-]+)(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$'
-TOKEN_RE='"(access_token|token)"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._~+/=-]+)"'
+TOKEN_RE='"(access_token|token)"[[:space:]]*:[[:space:]]*"([^"]*)"'
+# The token is written into a curl config line, so only these characters, and
+# at most TOKEN_MAX of them, are accepted.
+TOKEN_OK_RE='^[A-Za-z0-9._~+/=-]+$'
+TOKEN_MAX=8192
 MARKER='base-image-watch reported'
 TITLE_PREFIX='Base image update: '
 
@@ -361,18 +365,26 @@ status_reason() { # STATUS
 
 retryable() { [[ $1 == 000 || $1 == 429 || $1 == 5?? ]]; }
 
+token_ok() { [[ ${#1} -le $TOKEN_MAX && $1 =~ $TOKEN_OK_RE ]]; }
+
 # get_token HOST sets TOKENS[HOST] from the challenge in CH_*. On failure it
 # sets LK_STATUS and LK_REASON and returns 1 when a retry may help, else 2.
+# A token that fails token_ok is never stored or printed and is not retried.
 get_token() {
-    local out code
+    local out code token
     out=$(token_request "$CH_REALM" "$CH_SERVICE" "$CH_SCOPE")
     code=${out##*$'\n'}
     [[ $code =~ ^[0-9]{3}$ ]] || code=000
-    if [[ $code == 200 && $out =~ $TOKEN_RE ]]; then
-        TOKENS[$1]=${BASH_REMATCH[2]}
-        return 0
-    fi
     LK_STATUS=$code
+    if [[ $code == 200 && $out =~ $TOKEN_RE ]]; then
+        token=${BASH_REMATCH[2]}
+        if token_ok "$token"; then
+            TOKENS[$1]=$token
+            return 0
+        fi
+        LK_REASON="token request failed: unexpected characters or too long"
+        return 2
+    fi
     if [[ $code == 200 ]]; then
         LK_REASON="token request: no token in the answer"
         return 2
@@ -893,6 +905,36 @@ pinned|public.ecr.aws/docker/library/python|3.12-slim-trixie|$E|.github/workflow
     lookup_once registry.example.com/upper:1 || rc=$?
     expect "malformed digest in the header: not retried, not used" "2 the answer is not a sha256 digest|" \
         "$rc $LK_REASON|$LK_DIGEST"
+
+    log ""
+    log "Token check"
+    local saved_token=$FAKE_TOKEN bad_token=$'BAD-TOKEN\nheader = "X-Injected: 1"'
+    out=""
+    for rc in 'BAD"TOKEN' "$bad_token" "$(hex 0 $((TOKEN_MAX + 1)))" ""; do
+        if token_ok "$rc"; then out+=pass,; else out+=refused,; fi
+    done
+    expect "a token with a quote or newline, too long or empty is refused" "refused,refused,refused,refused," "$out"
+    out=""
+    for rc in "$FAKE_TOKEN" "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln-_~+/=" "$(hex 0 "$TOKEN_MAX")"; do
+        if token_ok "$rc"; then out+=pass,; else out+=refused,; fi
+    done
+    expect "a normal token passes, also at the length limit" "pass,pass,pass," "$out"
+    : > "$WORK/requests"
+    : > "$WORK/tokens"
+    TOKENS=()
+    FAKE_CHALLENGE='Bearer realm="https://registry.example.com/token",service="registry.example.com"'
+    url=$(manifest_url registry.example.com/badtoken:1)
+    FAKE_HTTP[$url]=401
+    FAKE_TOKEN=$bad_token
+    rc=0
+    lookup_once registry.example.com/badtoken:1 || rc=$?
+    expect "a token from the endpoint with a newline: failed token request, not retried, not kept" \
+        "2 200 token request failed: unexpected characters or too long 1 1 0" \
+        "$rc $LK_STATUS $LK_REASON $(requests "$url") $(wc -l < "$WORK/tokens") ${#TOKENS[@]}"
+    (RETRY_DELAYS="0 0 0" lookup registry.example.com/badtoken:1) > "$WORK/badtoken" 2>&1 || true
+    expect "a refused token is never printed" "0 1" \
+        "$(grep -c 'BAD-TOKEN\|Injected' "$WORK/badtoken" || true) $(grep -c 'token request failed' "$WORK/badtoken" || true)"
+    FAKE_TOKEN=$saved_token
 
     log ""
     log "Compare (fake registry, fake issues, dry run)"
