@@ -3,8 +3,9 @@
 #
 # Finds every image pinned as image:tag@sha256:<digest> in the repo's
 # Dockerfiles (any file named Dockerfile or Dockerfile.*) and in the image:
-# lines of .github/workflows/*.yml. For each pinned image:tag it asks the
-# registry once for the digest the tag points at now. When that differs from
+# lines of .github/workflows/*.yml. For each pinned image:tag it sends one
+# HEAD request for the tag's manifest and reads the Docker-Content-Digest
+# header, the digest the tag points at now. When that differs from
 # the pin, it opens an issue "Base image update: <image:tag>", or comments on
 # the open one if the digest has moved again since it last reported. It never
 # changes files and never opens pull requests.
@@ -17,8 +18,6 @@
 # Environment:
 #   DRY_RUN       "false" opens and comments on issues. Anything else (and the
 #                 default) prints what would happen and creates nothing.
-#   LOOKUP_TOOL   docker (docker buildx imagetools) or crane. Default: docker
-#                 when installed, else crane.
 #   RETRY_DELAYS  seconds to wait before each retry of a failed lookup.
 #                 Default "30 60 120": three retries.
 #   GH_TOKEN, GH_REPO  for gh. Issues are read in a dry run and written only
@@ -28,7 +27,8 @@
 # Exit status: 0 when every pin could be checked, 1 when a lookup still failed
 # after the retries, a pin is malformed, or an issue could not be handled.
 # Registry output is untrusted: a digest is used only after it matches
-# ^sha256:[0-9a-f]{64}$.
+# ^sha256:[0-9a-f]{64}$, and no registry text is ever printed. Needs bash 4,
+# curl and gh, nothing else.
 
 # Backticks in the printf formats are Markdown code spans, not commands.
 # shellcheck disable=SC2016
@@ -41,14 +41,19 @@ DIGEST_RE='^sha256:[0-9a-f]{64}$'
 NAME_RE='^[a-z0-9]+([._-]+[a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-]+[a-z0-9]+)*)*$'
 TAG_RE='^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'
 LOCATION_RE='^[A-Za-z0-9_.][A-Za-z0-9_./-]*:[0-9]+$'
-# Lookup errors that will not go away on a retry.
-PERMANENT_RE='not found|manifest unknown|name unknown|invalid reference'
+# The registry answers with the digest of whatever the tag points at: the
+# index for a multi-platform image, else the single manifest.
+ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+# A token realm must be https on the registry's own host or on its known token
+# host here, so a registry cannot send the token request anywhere else.
+declare -A TOKEN_HOSTS=([registry-1.docker.io]=auth.docker.io)
+REALM_RE='^https://([A-Za-z0-9.-]+)(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$'
+TOKEN_RE='"(access_token|token)"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._~+/=-]+)"'
 MARKER='base-image-watch reported'
 TITLE_PREFIX='Base image update: '
 
 DRY_RUN=${DRY_RUN:-true}
 RETRY_DELAYS=${RETRY_DELAYS:-30 60 120}
-LOOKUP_TOOL=${LOOKUP_TOOL:-}
 ISSUE_BACKEND=gh
 
 WORK=$(mktemp -d)
@@ -60,13 +65,13 @@ declare -A STAGES=()
 declare -a KEYS=() ROWS=()
 declare -A KEY_SEEN=() ROW_KIND=() ROW_REF=() ROW_KEY=() ROW_PIN=() ROW_LOCS=()
 declare -A CURRENT=() LOOKUP_FAILED=()
+# Anonymous pull token per registry host, reused while the registry accepts
+# it. Kept in this variable only and never printed.
+declare -A TOKENS=()
+declare -A HEAD_REJECTED=()
 FAILURES=0
 
 log() { printf '%s\n' "$*"; }
-
-# First line of a file, printable characters only, at most 200 of them. Used
-# for registry and gh error text, which is untrusted.
-first_line() { head -n 1 "$1" | tr -cd '[:print:]' | cut -c1-200; }
 
 short() { if [[ -n $1 ]]; then printf 'sha256:%s' "${1:7:12}"; else printf -- '-'; fi; }
 
@@ -236,58 +241,231 @@ group_records() {
 
 # ── Lookups ─────────────────────────────────────────────────────────────────
 
-pick_lookup_tool() {
-    if [[ -z $LOOKUP_TOOL ]]; then
-        if command -v docker > /dev/null 2>&1; then LOOKUP_TOOL=docker; else LOOKUP_TOOL=crane; fi
+# split_ref IMAGE:TAG sets REF_REGISTRY, REF_REPO and REF_TAG for the
+# registry API. Docker Hub names (no registry, or docker.io) go to
+# registry-1.docker.io, with library/ for official images.
+split_ref() {
+    local name=${1%:*} first
+    REF_TAG=${1##*:}
+    first=${name%%/*}
+    if [[ $name == */* && ($first == *.* || $first == *:* || $first == localhost) ]]; then
+        REF_REGISTRY=$first REF_REPO=${name#*/}
+    else
+        REF_REGISTRY=docker.io REF_REPO=$name
     fi
-    case $LOOKUP_TOOL in
-        docker | crane | fake) ;;
-        *) log "LOOKUP_TOOL must be docker or crane"; exit 1 ;;
+    if [[ $REF_REGISTRY == docker.io || $REF_REGISTRY == index.docker.io ]]; then
+        REF_REGISTRY=registry-1.docker.io
+        [[ $REF_REPO == */* ]] || REF_REPO=library/$REF_REPO
+    fi
+}
+
+manifest_url() { # IMAGE:TAG
+    split_ref "$1"
+    printf 'https://%s/v2/%s/manifests/%s' "$REF_REGISTRY" "$REF_REPO" "$REF_TAG"
+}
+
+# header_value FILE NAME prints the value of the last NAME header in a saved
+# response, matching the name in any case and ignoring CR line ends.
+header_value() {
+    local line name value=""
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%$'\r'}
+        [[ $line == *:* ]] || continue
+        name=${line%%:*}
+        if [[ ${name,,} == "${2,,}" ]]; then
+            value=${line#*:}
+            value=${value#"${value%%[![:space:]]*}"}
+            value=${value%"${value##*[![:space:]]}"}
+        fi
+    done < "$1"
+    printf '%s' "$value"
+}
+
+# parse_challenge FILE REGISTRY REPO reads the "WWW-Authenticate: Bearer
+# realm=...,service=...,scope=..." header of a saved 401 and sets CH_REALM,
+# CH_SERVICE and CH_SCOPE. With no scope it asks for repository:REPO:pull.
+# Fails with CH_ERROR set when the challenge is unusable or the realm is not
+# https on the registry's host or its known token host.
+parse_challenge() {
+    local rest key value host
+    CH_REALM="" CH_SERVICE="" CH_SCOPE="" CH_ERROR=""
+    rest=$(header_value "$1" www-authenticate)
+    if [[ ! $rest =~ ^[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+(.*)$ ]]; then
+        CH_ERROR="no Bearer challenge"
+        return 1
+    fi
+    rest=${BASH_REMATCH[1]}
+    while [[ $rest =~ ^[[:space:],]*([A-Za-z]+)=\"([^\"]*)\"(.*)$ ]]; do
+        key=${BASH_REMATCH[1],,} value=${BASH_REMATCH[2]} rest=${BASH_REMATCH[3]}
+        case $key in
+            realm) CH_REALM=$value ;;
+            service) CH_SERVICE=$value ;;
+            scope) CH_SCOPE=$value ;;
+        esac
+    done
+    if [[ ! $CH_REALM =~ $REALM_RE ]]; then
+        CH_ERROR="token realm is not an https URL"
+        return 1
+    fi
+    host=${BASH_REMATCH[1],,}
+    if [[ $host != "${2%%:*}" && $host != "${TOKEN_HOSTS[${2%%:*}]:-}" ]]; then
+        CH_ERROR="token realm is on another host"
+        return 1
+    fi
+    [[ -n $CH_SCOPE ]] || CH_SCOPE="repository:$3:pull"
+    if [[ ! $CH_SERVICE =~ ^[A-Za-z0-9._:-]*$ || ! $CH_SCOPE =~ ^[A-Za-z0-9._:/,*-]+$ ]]; then
+        CH_ERROR="unexpected characters in the challenge"
+        return 1
+    fi
+}
+
+# http_request METHOD URL [TOKEN] sends one manifest request, saves the
+# response headers to $WORK/headers and prints the status ("000" for no
+# answer). The token reaches curl on stdin, never on the command line.
+# No redirects are followed.
+http_request() {
+    local method=$1 url=$2 token=${3:-} code
+    local -a args=(--silent --connect-timeout 10 --max-time 30 --proto "=https"
+        --output /dev/null --dump-header "$WORK/headers" --write-out '%{http_code}'
+        --header "Accept: $ACCEPT")
+    if [[ $method == HEAD ]]; then args+=(--head); fi
+    : > "$WORK/headers"
+    code=$(if [[ -n $token ]]; then printf 'header = "Authorization: Bearer %s"\n' "$token"; fi |
+        curl --config - "${args[@]}" "$url" 2> /dev/null) || true
+    [[ $code =~ ^[0-9]{3}$ ]] || code=000
+    printf '%s' "$code"
+}
+
+# token_request REALM SERVICE SCOPE asks the token endpoint for an anonymous
+# pull token and prints the answer, a newline and the status. No credentials
+# are sent.
+token_request() {
+    local -a args=(--silent --connect-timeout 10 --max-time 30 --proto "=https" --get
+        --write-out '\n%{http_code}' --data-urlencode "scope=$3")
+    if [[ -n $2 ]]; then args+=(--data-urlencode "service=$2"); fi
+    curl "${args[@]}" "$1" 2> /dev/null || true
+}
+
+status_reason() { # STATUS
+    case $1 in
+        000) printf 'no answer, network error or timeout' ;;
+        401) printf 'unauthorized' ;;
+        403) printf 'forbidden' ;;
+        404) printf 'not found' ;;
+        405 | 501) printf 'method not allowed' ;;
+        429) printf 'too many requests' ;;
+        5??) printf 'server error' ;;
+        *) printf 'unexpected status' ;;
     esac
 }
 
-# lookup_once IMAGE:TAG prints the digest of what the tag points at: the index
-# digest for a multi-platform image. Errors go to stderr.
+retryable() { [[ $1 == 000 || $1 == 429 || $1 == 5?? ]]; }
+
+# get_token HOST sets TOKENS[HOST] from the challenge in CH_*. On failure it
+# sets LK_STATUS and LK_REASON and returns 1 when a retry may help, else 2.
+get_token() {
+    local out code
+    out=$(token_request "$CH_REALM" "$CH_SERVICE" "$CH_SCOPE")
+    code=${out##*$'\n'}
+    [[ $code =~ ^[0-9]{3}$ ]] || code=000
+    if [[ $code == 200 && $out =~ $TOKEN_RE ]]; then
+        TOKENS[$1]=${BASH_REMATCH[2]}
+        return 0
+    fi
+    LK_STATUS=$code
+    if [[ $code == 200 ]]; then
+        LK_REASON="token request: no token in the answer"
+        return 2
+    fi
+    LK_REASON="token request: $(status_reason "$code")"
+    if retryable "$code"; then return 1; fi
+    return 2
+}
+
+# lookup_once IMAGE:TAG makes one manifest request. Only when the registry
+# answers 401 does it fetch an anonymous token and send the request once more.
+# A registry that rejects HEAD gets a GET instead. Sets LK_STATUS, LK_REASON
+# and LK_DIGEST, and adds to LK_REQUESTS. Returns 0 with a digest, 1 when a
+# retry may help, 2 when it will not.
 lookup_once() {
-    case $LOOKUP_TOOL in
-        docker) docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest // .Digest // empty' ;;
-        crane) crane digest "$1" ;;
-        fake) fake_lookup "$1" ;;
-    esac
+    local key=$1 url host method=HEAD asked_token=0 rc
+    url=$(manifest_url "$key")
+    split_ref "$key"
+    host=$REF_REGISTRY
+    LK_DIGEST="" LK_REASON=""
+    while :; do
+        [[ -z ${HEAD_REJECTED[$host]+x} ]] || method=GET
+        LK_STATUS=$(http_request "$method" "$url" "${TOKENS[$host]:-}")
+        LK_REQUESTS=$((LK_REQUESTS + 1))
+        case $LK_STATUS in
+            200)
+                LK_DIGEST=$(header_value "$WORK/headers" docker-content-digest)
+                [[ ! $LK_DIGEST =~ $DIGEST_RE ]] || return 0
+                if [[ -z $LK_DIGEST ]]; then
+                    LK_REASON="no Docker-Content-Digest header"
+                else
+                    LK_REASON="the answer is not a sha256 digest"
+                fi
+                LK_DIGEST=""
+                return 2
+                ;;
+            401)
+                if ((asked_token)); then
+                    LK_REASON="unauthorized, even with a new token"
+                    return 2
+                fi
+                asked_token=1
+                if ! parse_challenge "$WORK/headers" "$host" "$REF_REPO"; then
+                    LK_REASON=$CH_ERROR
+                    return 2
+                fi
+                rc=0
+                get_token "$host" || rc=$?
+                LK_REQUESTS=$((LK_REQUESTS + 1))
+                ((rc == 0)) || return "$rc"
+                ;;
+            405 | 501)
+                if [[ $method == GET ]]; then
+                    LK_REASON=$(status_reason "$LK_STATUS")
+                    return 2
+                fi
+                HEAD_REJECTED[$host]=1
+                ;;
+            *)
+                LK_REASON=$(status_reason "$LK_STATUS")
+                if retryable "$LK_STATUS"; then return 1; fi
+                return 2
+                ;;
+        esac
+    done
 }
 
-# lookup KEY sets CURRENT[KEY] or LOOKUP_FAILED[KEY]. Retries a 429 or network
-# error once per entry in RETRY_DELAYS. A "not found" error or an answer that
-# is not a digest is not retried.
+# lookup KEY sets CURRENT[KEY] or LOOKUP_FAILED[KEY]. A 429, 5xx or network
+# error is retried once per entry in RETRY_DELAYS. A 404, any other status or
+# an answer that is not a digest is not retried. Each failed attempt is logged
+# with the HTTP status first.
 lookup() {
-    local key=$1 attempt=0 out err="$WORK/lookup.err"
+    local key=$1 attempt=0 rc
     local -a delays=()
     read -r -a delays <<< "$RETRY_DELAYS" || true
+    LK_REQUESTS=0
     while :; do
         attempt=$((attempt + 1))
-        if out=$(lookup_once "$key" 2> "$err"); then
-            out=${out%$'\r'}
-            if [[ $out =~ $DIGEST_RE ]]; then
-                CURRENT[$key]=$out
-                log "  $key: $(short "$out") (attempt $attempt)"
-                return 0
-            fi
-            log "  $key: attempt $attempt: the answer is not a sha256 digest"
-            break
+        rc=0
+        lookup_once "$key" || rc=$?
+        if ((rc == 0)); then
+            CURRENT[$key]=$LK_DIGEST
+            log "  $key: $(short "$LK_DIGEST") (HTTP $LK_STATUS, attempt $attempt, $LK_REQUESTS request(s))"
+            return 0
         fi
-        log "  $key: attempt $attempt failed: $(first_line "$err")"
-        if grep -qiE "$PERMANENT_RE" "$err"; then
-            break
-        fi
-        if ((attempt > ${#delays[@]})); then
-            break
-        fi
+        log "  HTTP $LK_STATUS ($LK_REASON) on attempt $attempt: $key"
+        ((rc == 1 && attempt <= ${#delays[@]})) || break
         log "  $key: retrying in ${delays[attempt - 1]} s"
         sleep "${delays[attempt - 1]}"
     done
     LOOKUP_FAILED[$key]=1
     FAILURES=$((FAILURES + 1))
-    log "  $key: lookup failed"
+    log "  $key: lookup failed after $LK_REQUESTS request(s)"
 }
 
 row_result() { # ID
@@ -542,30 +720,54 @@ expect_line() { # DESCRIPTION FILE FIXED_STRING
 
 hex() { printf "%0${2:-64}d" 0 | tr 0 "$1"; }
 
-# Fake registry answers, one word per attempt, the last word repeating.
-# "err:TEXT" is a failed attempt with TEXT on stderr (underscores for spaces).
-declare -A FAKE_ANSWERS=()
-fake_lookup() {
-    local ref=$1 n answer
+# Fake registry, standing in for http_request and token_request in the
+# self-test. FAKE_HTTP[URL] lists one answer per request to that URL, the last
+# one repeating: a status, optionally ":" and the Docker-Content-Digest value.
+# A 401 carries FAKE_CHALLENGE. Each request is logged to $WORK/requests as
+# URL, method and whether it carried a token.
+declare -A FAKE_HTTP=()
+FAKE_CHALLENGE=""
+FAKE_TOKEN='FAKE-SECRET-TOKEN'
+fake_http() { # METHOD URL [TOKEN]
+    local n answer status digest=""
     local -a answers=()
-    printf '%s\n' "$ref" >> "$WORK/attempts"
-    n=$(grep -cxF -- "$ref" "$WORK/attempts")
-    read -r -a answers <<< "${FAKE_ANSWERS[$ref]:-err:not_found}"
+    printf '%s\t%s\t%s\n' "$2" "$1" "${3:+token}" >> "$WORK/requests"
+    n=$(cut -f1 "$WORK/requests" | grep -cxF -- "$2")
+    read -r -a answers <<< "${FAKE_HTTP[$2]:-404}"
     answer=${answers[n - 1]:-${answers[${#answers[@]} - 1]}}
-    if [[ $answer == err:* ]]; then
-        printf '%s\n' "${answer#err:}" | tr _ ' ' >&2
-        return 1
-    fi
-    printf '%s\n' "$answer"
+    status=${answer%%:*}
+    [[ $answer != *:* ]] || digest=${answer#*:}
+    {
+        printf 'HTTP/1.1 %s Fake\r\n' "$status"
+        if [[ $status == 401 ]]; then printf 'www-authenticate: %s\r\n' "$FAKE_CHALLENGE"; fi
+        if [[ -n $digest ]]; then printf 'docker-content-digest: %s\r\n' "$digest"; fi
+        printf '\r\n'
+    } > "$WORK/headers"
+    printf '%s' "$status"
+}
+fake_token() { # REALM SERVICE SCOPE
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WORK/tokens"
+    printf '{"token": "%s", "expires_in": 300}\n200' "$FAKE_TOKEN"
 }
 declare -A FAKE_ISSUES=() FAKE_REPORTED=()
 fake_issue_find() { printf '%s' "${FAKE_ISSUES[$1]:-}"; }
 fake_issue_reported() { printf '%s' "${FAKE_REPORTED[$1]:-}"; }
 
-attempts() { grep -cxF -- "$1" "$WORK/attempts" || true; }
+# requests URL counts the manifest requests sent to URL.
+requests() { cut -f1 "$WORK/requests" | grep -cxF -- "$1" || true; }
+
+# challenge HEADER_VALUE REGISTRY REPO prints what parse_challenge made of it.
+challenge() {
+    printf 'HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: %s\r\n\r\n' "$1" > "$WORK/challenge"
+    if parse_challenge "$WORK/challenge" "$2" "$3"; then
+        printf 'ok %s %s %s' "$CH_REALM" "$CH_SERVICE" "$CH_SCOPE"
+    else
+        printf 'refused: %s' "$CH_ERROR"
+    fi
+}
 
 self_test() {
-    local A B C D E F G H I PY TOOL NODE out status
+    local A B C D E F G H I PY TOOL NODE out status rc url T=$'\t'
     A=sha256:$(hex a) B=sha256:$(hex b) C=sha256:$(hex c) D=sha256:$(hex d) E=sha256:$(hex e)
     F=sha256:$(hex f) G=sha256:$(hex 1) H=sha256:$(hex 2) I=sha256:$(hex 3)
     PY=public.ecr.aws/docker/library/python:3.12-slim-trixie
@@ -590,6 +792,8 @@ self_test() {
         "FROM $NODE@$H"
         "FROM registry.example.com/down:1@$G"
         "FROM registry.example.com/liar:2@$G"
+        "FROM registry.example.com/old:3@$G"
+        "FROM registry.example.com/gone:4@$G"
     )
     local i
     for i in "${!docker_lines[@]}"; do
@@ -618,6 +822,8 @@ malformed||||sample/Dockerfile:12
 pinned|public.ecr.aws/docker/library/node|24-trixie-slim|$H|sample/Dockerfile:13
 pinned|registry.example.com/down|1|$G|sample/Dockerfile:14
 pinned|registry.example.com/liar|2|$G|sample/Dockerfile:15
+pinned|registry.example.com/old|3|$G|sample/Dockerfile:16
+pinned|registry.example.com/gone|4|$G|sample/Dockerfile:17
 unpinned|postgres|16||.github/workflows/sample.yml:1
 notag|adobe/s3mock||$C|.github/workflows/sample.yml:2
 pinned|ghcr.io/example/tool|1.2.3|$D|.github/workflows/sample.yml:3
@@ -626,14 +832,82 @@ malformed||||.github/workflows/sample.yml:5
 pinned|public.ecr.aws/docker/library/python|3.12-slim-trixie|$E|.github/workflows/sample.yml:6" "$out"
 
     log ""
+    log "Registry names"
+    expect "Docker Hub official image" "https://registry-1.docker.io/v2/library/postgres/manifests/16" \
+        "$(manifest_url postgres:16)"
+    expect "docker.io prefix" "https://registry-1.docker.io/v2/library/busybox/manifests/1.37" \
+        "$(manifest_url docker.io/library/busybox:1.37)"
+    expect "Docker Hub user image" "https://registry-1.docker.io/v2/adobe/s3mock/manifests/4" \
+        "$(manifest_url adobe/s3mock:4)"
+    expect "registry with a port" "https://localhost:5000/v2/team/base/manifests/2" \
+        "$(manifest_url localhost:5000/team/base:2)"
+    expect "public.ecr.aws" "https://public.ecr.aws/v2/docker/library/python/manifests/3.12-slim-trixie" \
+        "$(manifest_url "$PY")"
+
+    log ""
+    log "Token challenge"
+    expect "valid challenge" "ok https://public.ecr.aws/token/ public.ecr.aws aws" \
+        "$(challenge 'Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws",scope="aws"' \
+            public.ecr.aws docker/library/python)"
+    expect "no scope: asks for pull on the repository, known token host" \
+        "ok https://auth.docker.io/token registry.docker.io repository:library/postgres:pull" \
+        "$(challenge 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"' \
+            registry-1.docker.io library/postgres)"
+    expect "non-https realm refused" "refused: token realm is not an https URL" \
+        "$(challenge 'Bearer realm="http://public.ecr.aws/token/",service="public.ecr.aws",scope="aws"' \
+            public.ecr.aws docker/library/python)"
+    expect "realm on a foreign host refused" "refused: token realm is on another host" \
+        "$(challenge 'Bearer realm="https://tokens.example.net/token",service="public.ecr.aws",scope="aws"' \
+            public.ecr.aws docker/library/python)"
+    expect "look-alike realm host refused" "refused: token realm is on another host" \
+        "$(challenge 'Bearer realm="https://public.ecr.aws.example.net/token",scope="aws"' \
+            public.ecr.aws docker/library/python)"
+    expect "Docker Hub's token host is not accepted for another registry" "refused: token realm is on another host" \
+        "$(challenge 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"' \
+            ghcr.io example/tool)"
+    expect "not a Bearer challenge" "refused: no Bearer challenge" \
+        "$(challenge 'Basic realm="registry"' public.ecr.aws docker/library/python)"
+
+    log ""
+    log "Digest header"
+    printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nDOCKER-CONTENT-DIGEST: %s\r\n\r\n' "$A" > "$WORK/h1"
+    expect "header name in any case, CRLF line ends" "$A" "$(header_value "$WORK/h1" docker-content-digest)"
+    printf 'HTTP/1.1 200 OK\nDocker-Content-Digest:   %s  \n\n' "$B" > "$WORK/h2"
+    expect "LF line ends and padding" "$B" "$(header_value "$WORK/h2" docker-content-digest)"
+    printf 'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n' > "$WORK/h3"
+    expect "missing header gives nothing" "" "$(header_value "$WORK/h3" docker-content-digest)"
+
+    http_request() { fake_http "$@"; }
+    token_request() { fake_token "$@"; }
+    : > "$WORK/requests"
+    : > "$WORK/tokens"
+    LK_REQUESTS=0
+    url=$(manifest_url registry.example.com/nohdr:1)
+    FAKE_HTTP[$url]=200
+    rc=0
+    lookup_once registry.example.com/nohdr:1 || rc=$?
+    expect "200 without the header: not retried" "2 200 no Docker-Content-Digest header" "$rc $LK_STATUS $LK_REASON"
+    url=$(manifest_url registry.example.com/upper:1)
+    FAKE_HTTP[$url]="200:sha256:$(hex A)"
+    rc=0
+    lookup_once registry.example.com/upper:1 || rc=$?
+    expect "malformed digest in the header: not retried, not used" "2 the answer is not a sha256 digest|" \
+        "$rc $LK_REASON|$LK_DIGEST"
+
+    log ""
     log "Compare (fake registry, fake issues, dry run)"
-    LOOKUP_TOOL=fake ISSUE_BACKEND=fake DRY_RUN=true RETRY_DELAYS="0 0 0"
-    : > "$WORK/attempts"
-    FAKE_ANSWERS[$PY]=$A
-    FAKE_ANSWERS[$TOOL]="err:429_Too_Many_Requests err:dial_tcp:_connection_reset_by_peer $F"
-    FAKE_ANSWERS[$NODE]=$I
-    FAKE_ANSWERS[registry.example.com/down:1]="err:429_Too_Many_Requests"
-    FAKE_ANSWERS[registry.example.com/liar:2]='sha256:<script>alert(1)</script>'
+    ISSUE_BACKEND=fake DRY_RUN=true RETRY_DELAYS="0 0 0"
+    : > "$WORK/requests"
+    : > "$WORK/tokens"
+    TOKENS=()
+    FAKE_CHALLENGE='Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws",scope="aws"'
+    FAKE_HTTP[$(manifest_url "$PY")]="401 200:$A"
+    FAKE_HTTP[$(manifest_url "$TOOL")]="429 000 200:$F"
+    FAKE_HTTP[$(manifest_url "$NODE")]="200:$I"
+    FAKE_HTTP[$(manifest_url registry.example.com/down:1)]=429
+    FAKE_HTTP[$(manifest_url registry.example.com/liar:2)]='200:sha256:<script>alert(1)</script>'
+    FAKE_HTTP[$(manifest_url registry.example.com/old:3)]="405 200:$G"
+    FAKE_HTTP[$(manifest_url registry.example.com/gone:4)]=404
     FAKE_ISSUES["${TITLE_PREFIX}$PY"]=8
     FAKE_REPORTED[8]=$B
     FAKE_ISSUES["${TITLE_PREFIX}$TOOL"]=7
@@ -643,13 +917,28 @@ pinned|public.ecr.aws/docker/library/python|3.12-slim-trixie|$E|.github/workflow
     check "" > "$WORK/out" 2>&1 || status=$?
     sed 's/^/    > /' "$WORK/out"
 
-    expect "the run fails (two lookups failed, three pins malformed)" 1 "$status"
-    expect "python pinned in three places, looked up once" 1 "$(attempts "$PY")"
-    expect "429 then network error then success: three attempts" 3 "$(attempts "$TOOL")"
-    expect "lasting 429: one try and three retries" 4 "$(attempts registry.example.com/down:1)"
-    expect "an answer that is not a digest is not retried" 1 "$(attempts registry.example.com/liar:2)"
+    url=$(manifest_url "$PY")
+    expect "the run fails (three lookups failed, three pins malformed)" 1 "$status"
+    expect "python pinned in three places: one lookup, 401 then one retry with a token" \
+        "$url${T}HEAD${T}|$url${T}HEAD${T}token" "$(grep -F "$url" "$WORK/requests" | paste -sd '|')"
+    expect "one token request, with the challenge's service and scope" \
+        "https://public.ecr.aws/token/${T}public.ecr.aws${T}aws" "$(cat "$WORK/tokens")"
+    expect "the token is reused for the same registry: one request" \
+        "$(manifest_url "$NODE")${T}HEAD${T}token" "$(grep -F "$(manifest_url "$NODE")" "$WORK/requests")"
+    expect "429 then network error then success: three attempts" 3 "$(requests "$(manifest_url "$TOOL")")"
+    expect "lasting 429: one try and three retries" 4 "$(requests "$(manifest_url registry.example.com/down:1)")"
+    expect "an answer that is not a digest is not retried" 1 "$(requests "$(manifest_url registry.example.com/liar:2)")"
+    expect "404 is not retried" 1 "$(requests "$(manifest_url registry.example.com/gone:4)")"
+    expect "HEAD rejected: GET once instead" "HEAD|GET" \
+        "$(grep -F "$(manifest_url registry.example.com/old:3)" "$WORK/requests" | cut -f2 | paste -sd '|')"
     expect "untagged and unpinned references are not looked up" 0 \
-        "$(grep -cE '^(localhost|adobe|postgres|docker\.io)' "$WORK/attempts" || true)"
+        "$(grep -cE 'localhost|s3mock|postgres|busybox' "$WORK/requests" || true)"
+    expect "failed attempt logged with the HTTP status first" 1 \
+        "$(grep -cxF '  HTTP 429 (too many requests) on attempt 1: registry.example.com/down:1' "$WORK/out" || true)"
+    expect "network error logged as HTTP 000" 1 \
+        "$(grep -cxF "  HTTP 000 (no answer, network error or timeout) on attempt 2: $TOOL" "$WORK/out" || true)"
+    expect_line "404 logged" "$WORK/out" "  HTTP 404 (not found) on attempt 1: registry.example.com/gone:4"
+    expect "the token never reaches the output" 0 "$(grep -c "$FAKE_TOKEN" "$WORK/out" || true)"
     expect_line "two stages, same pin: one row" "$WORK/out" \
         "| \`$PY\` | \`$(short "$A")\` | \`$(short "$A")\` | up to date | \`sample/Dockerfile:2\`, \`sample/Dockerfile:4\` |"
     expect_line "same tag, other digest: update available" "$WORK/out" \
@@ -685,8 +974,7 @@ main() {
         log "usage: $0 [--self-test]"
         return 2
     fi
-    pick_lookup_tool
-    log "Lookup tool: $LOOKUP_TOOL. Mode: $([[ $DRY_RUN == false ]] && echo real run || echo dry run)."
+    log "Lookup: one manifest request per image:tag. Mode: $([[ $DRY_RUN == false ]] && echo real run || echo dry run)."
     scan_repo
     check "${GITHUB_STEP_SUMMARY:-}"
 }
