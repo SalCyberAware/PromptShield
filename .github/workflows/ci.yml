@@ -270,7 +270,7 @@ jobs:
           docker run -d --name api -p 9090:9090 \
             -e PORT=9090 -e FRONTEND_URL=https://example.com \
             -e RAILWAY_GIT_COMMIT_SHA="$EXPECTED_SHA" promptshield-api:ci
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -fsS -o health.json http://127.0.0.1:9090/api/health && break
             sleep 2
           done
