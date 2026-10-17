@@ -39,6 +39,7 @@ jobs:
       - name: PromptShield backend (/api/health)
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://promptshield-production-1846.up.railway.app/api/health")
           echo "HTTP $code"; cat body.txt; echo
@@ -54,6 +55,7 @@ jobs:
       - name: PromptShield frontend
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://prompt-shield-mocha.vercel.app")
           echo "HTTP $code"
@@ -62,6 +64,7 @@ jobs:
       - name: SOCTriage backend (/health)
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://soctriage-production.up.railway.app/health")
           echo "HTTP $code"; cat body.txt; echo
@@ -77,6 +80,7 @@ jobs:
       - name: SOCTriage frontend
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://soctriage.vercel.app")
           echo "HTTP $code"
@@ -89,6 +93,7 @@ jobs:
       - name: ThreatScan backend (/api/health)
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://threatscan-production.up.railway.app/api/health")
           echo "HTTP $code"; cat body.txt; echo
@@ -104,6 +109,7 @@ jobs:
       - name: ThreatScan frontend
         if: ${{ !cancelled() }}
         run: |
+          # shellcheck disable=SC2086 # CURL_OPTS holds several flags and must word-split
           code=$(curl $CURL_OPTS -o body.txt -w '%{http_code}' \
             "https://threat-scan.vercel.app")
           echo "HTTP $code"
