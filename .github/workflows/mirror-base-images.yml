@@ -1,0 +1,92 @@
+name: Mirror base images
+
+# Weekly copy of the base images that PromptShield, ThreatScan and SOCTriage
+# pin by digest into ghcr.io/salcyberaware/mirror. CI jobs failed with
+# public.ecr.aws 429 "Data limit exceeded", mostly on service containers that
+# GitHub pulls before any step runs. GitHub runners pull from GHCR without
+# that limit, so CI can point at these copies by the same digests. Railway
+# builds keep using public.ecr.aws.
+#
+# Each pinned digest is copied once (crane copy keeps the digest) and each
+# mirror tag follows its upstream tag. Copies that are already there are
+# skipped. The logic is in .github/scripts/mirror-base-images.sh, which has a
+# --self-test mode that needs no network. See docs/BASE_IMAGE_MIRROR.md.
+
+on:
+  schedule:
+    # Thursdays 06:30 UTC, an hour before the base image watch. A scheduled
+    # run is always a real run.
+    - cron: "30 6 * * 4"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: list what would be copied and copy nothing"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: mirror-base-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror pinned base images to GHCR
+    runs-on: ubuntu-latest
+    # A first run copies every image; each crane call can wait up to 3.5
+    # minutes across its retries.
+    timeout-minutes: 60
+    permissions:
+      contents: read # check out this repo
+      packages: write # push the copies to ghcr.io/salcyberaware/mirror/*
+    steps:
+      - name: Check out PromptShield
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out ThreatScan main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SalCyberAware/ThreatScan
+          ref: main
+          path: mirror-src/ThreatScan
+          persist-credentials: false
+
+      - name: Check out SOCTriage main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SalCyberAware/SOCTriage
+          ref: main
+          path: mirror-src/SOCTriage
+          persist-credentials: false
+
+      - name: Install crane (checksum verified)
+        env:
+          CRANE_VERSION: "0.22.1"
+          # sha256 of go-containerregistry_Linux_x86_64.tar.gz in the v0.22.1
+          # release, from its checksums.txt.
+          CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+        run: |
+          mkdir -p "$RUNNER_TEMP/crane"
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/crane/crane.tar.gz" \
+            "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "$CRANE_SHA256  $RUNNER_TEMP/crane/crane.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/crane/crane.tar.gz" -C "$RUNNER_TEMP/crane" crane
+          "$RUNNER_TEMP/crane/crane" version
+
+      - name: Self-test (no network)
+        run: bash .github/scripts/mirror-base-images.sh --self-test
+
+      - name: Mirror pinned images
+        env:
+          # "false" only for a scheduled run or a manual run with dry_run off.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          GHCR_TOKEN: ${{ github.token }}
+          CRANE: ${{ runner.temp }}/crane/crane
+        run: >-
+          bash .github/scripts/mirror-base-images.sh
+          PromptShield=.
+          ThreatScan=mirror-src/ThreatScan
+          SOCTriage=mirror-src/SOCTriage
