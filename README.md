@@ -183,7 +183,7 @@ docker run -p 8080:8080 --env-file backend/.env promptshield-api
 
 Provider keys are read at runtime from the environment. None is baked into the image, and `.dockerignore` keeps `.env` files, tests and the evaluation data out of the build.
 
-**Testing:** 315 tests (245 for the package, 70 for the backend) across 6 CI jobs: a pytest matrix on Python 3.11, 3.12, and 3.13, plus ruff, mypy strict, and a backend job that installs the package the production way before running the web tests. All API calls are mocked, so the suite costs nothing and does not touch the network.
+**Testing:** 1,047 tests (829 for the package, 168 for the backend, 50 for the frontend) across 8 CI jobs: a pytest matrix on Python 3.11, 3.12, and 3.13, ruff, mypy strict, the verdict benchmark with mocked judges, a backend job that installs the package the production way before running the web tests, a hashed production install, a backend container build with a smoke test, and a frontend job (lint, build and tests). All API calls are mocked, so the suite costs nothing and does not touch the network.
 
 ---
 
