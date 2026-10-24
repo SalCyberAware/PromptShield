@@ -11,6 +11,10 @@ name: Mirror base images
 # mirror tag follows its upstream tag. Copies that are already there are
 # skipped. The logic is in .github/scripts/mirror-base-images.sh, which has a
 # --self-test mode that needs no network. See docs/BASE_IMAGE_MIRROR.md.
+#
+# A manual run with "seed" ticked copies nothing. It pushes a tiny placeholder
+# (tag "seed") to each mirror package so the packages exist and can be made
+# public before the first real copy. Private package storage is 500 MB.
 
 on:
   schedule:
@@ -23,6 +27,10 @@ on:
         description: "Dry run: list what would be copied and copy nothing"
         type: boolean
         default: true
+      seed:
+        description: "Seed: push a tiny placeholder to each mirror package, copy no images"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -83,10 +91,14 @@ jobs:
         env:
           # "false" only for a scheduled run or a manual run with dry_run off.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          # "true" only for a manual run with seed ticked.
+          SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed }}
           GHCR_TOKEN: ${{ github.token }}
           CRANE: ${{ runner.temp }}/crane/crane
-        run: >-
-          bash .github/scripts/mirror-base-images.sh
-          PromptShield=.
-          ThreatScan=mirror-src/ThreatScan
-          SOCTriage=mirror-src/SOCTriage
+        run: |
+          mode=()
+          if [[ $SEED == true ]]; then mode=(--seed); fi
+          bash .github/scripts/mirror-base-images.sh "${mode[@]}" \
+            PromptShield=. \
+            ThreatScan=mirror-src/ThreatScan \
+            SOCTriage=mirror-src/SOCTriage
