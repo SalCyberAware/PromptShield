@@ -17,15 +17,28 @@
 # compares the digest of the mirror tag with the upstream tag. A digest that
 # is already in the mirror is not copied again.
 #
+# Seed mode creates each mirror package before the first copy. GHCR creates a
+# package as private, and it can only be made public once it exists. Private
+# storage on a GitHub Free account is 500 MB, so copying gigabytes of base
+# images into new private packages fails. Seed mode pushes one placeholder per
+# package instead: an image with a single empty layer, built locally by crane
+# with no upstream pull, tagged <mirror>/<name>:seed. A package whose seed tag
+# exists is skipped. After Sal makes the packages public, the normal run copies
+# into them. The normal run never reads, moves or deletes the seed tag, and
+# refuses an upstream image whose tag is "seed".
+#
 # Usage, from the PromptShield repo root:
 #   .github/scripts/mirror-base-images.sh LABEL=DIR...  mirror the pins of each
 #                       repo checked out at DIR; LABEL names it in the output
+#   .github/scripts/mirror-base-images.sh --seed LABEL=DIR...  push a seed
+#                       placeholder to each mirror package the normal run uses
 #   .github/scripts/mirror-base-images.sh --self-test   test parsing, dedupe and
-#                       the copy decisions with a fake crane, no network
+#                       the copy and seed decisions with a fake crane, no network
 #
 # Environment:
-#   DRY_RUN        "false" copies and tags. Anything else (and the default)
-#                  only reads, lists what would be copied and copies nothing.
+#   DRY_RUN        "false" copies and tags (with --seed: pushes placeholders).
+#                  Anything else (and the default) only reads, lists what
+#                  would be copied or pushed and writes nothing.
 #   MIRROR_PREFIX  default ghcr.io/salcyberaware/mirror
 #   CRANE          the crane binary, default "crane"
 #   RETRY_DELAYS   seconds to wait before each retry of a crane call that
@@ -64,6 +77,8 @@ DRY_RUN=${DRY_RUN:-true}
 MIRROR_PREFIX=${MIRROR_PREFIX:-ghcr.io/salcyberaware/mirror}
 CRANE=${CRANE:-crane}
 RETRY_DELAYS=${RETRY_DELAYS:-30 60 120}
+SEED=0
+SEED_TAG=seed
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORK=$(mktemp -d)
@@ -526,6 +541,11 @@ mirror_key() {
         for loc in "${locs[@]}"; do log "  pinned at $(short "$d") in $loc"; done
     done
 
+    if [[ $tag == "$SEED_TAG" ]]; then
+        fail "$dest:$SEED_TAG is the seed placeholder; an upstream tag named $SEED_TAG cannot be mirrored"
+        for d in "${pins[@]}"; do add_row "$key" "$dest@" "$d" "-" "failed: tag reserved for the seed"; done
+        return
+    fi
     if [[ -n ${DEST_OWNER[$dest:$tag]+x} ]]; then
         fail "$dest:$tag is already the mirror of ${DEST_OWNER[$dest:$tag]}; two sources cannot share it"
         for d in "${pins[@]}"; do add_row "$key" "$dest@" "$d" "-" "failed: mirror name taken"; done
@@ -549,6 +569,99 @@ mirror_key() {
         cur_ok=$ED_OK
     fi
     ensure_tag "$key" "$dest" "$tag" "$cur" "$cur_ok"
+}
+
+# ── Seeding ─────────────────────────────────────────────────────────────────
+
+declare -a SEED_ROWS=()
+
+# seed_size REPO@DIGEST sets SIZE to the bytes of the image: its manifest plus
+# every config and layer size the manifest lists. Returns 1 when the manifest
+# cannot be read.
+seed_size() {
+    local n total
+    SIZE=""
+    mirror_read "$WORK/manifest" manifest "$1" || return 1
+    total=$(wc -c < "$WORK/manifest")
+    while read -r n; do
+        total=$((total + n))
+    done < <(grep -oE '"size":[[:space:]]*[0-9]+' "$WORK/manifest" | grep -oE '[0-9]+$' || true)
+    SIZE=$total
+}
+
+# seed_package DEST pushes the placeholder to DEST:seed unless that tag
+# exists. Nothing is read from or copied out of an upstream registry.
+seed_package() {
+    local dest=$1 ref=$1:$SEED_TAG
+    log ""
+    log "$ref"
+    if ! mirror_tag_digest "$ref"; then
+        fail "could not read $ref: $CR_REASON"
+        SEED_ROWS+=("$dest|-|-|failed: $CR_REASON")
+        return
+    fi
+    if [[ -n $GOT ]]; then
+        if seed_size "$dest@$GOT"; then
+            log "  already seeded ($SIZE bytes), skipped"
+        else
+            log "  already seeded (size unknown: $CR_REASON), skipped"
+        fi
+        SEED_ROWS+=("$dest|$GOT|${SIZE:--}|already seeded")
+        return
+    fi
+    if [[ $DRY_RUN != false ]]; then
+        log "  DRY RUN, would push the placeholder (one empty layer, under 1 KB)"
+        SEED_ROWS+=("$dest|-|-|dry run, would seed")
+        return
+    fi
+    if ! crane_call "$WORK/out" append --oci-empty-base -f "$WORK/seed-layer.tar" -t "$ref"; then
+        fail "push of $ref: $CR_REASON"
+        SEED_ROWS+=("$dest|-|-|failed: $CR_REASON")
+        return
+    fi
+    if ! mirror_tag_digest "$ref" || [[ -z $GOT ]]; then
+        fail "after the push, $ref cannot be read${CR_REASON:+ ($CR_REASON)}"
+        SEED_ROWS+=("$dest|-|-|failed: seed check")
+        return
+    fi
+    seed_size "$dest@$GOT" || SIZE=""
+    log "  seeded at $GOT (${SIZE:-unknown} bytes)"
+    SEED_ROWS+=("$dest|$GOT|${SIZE:--}|seeded")
+}
+
+# seed_all pushes one placeholder per distinct mirror package of KEYS.
+seed_all() {
+    local key dest
+    local -A seen=()
+    # An empty tar archive: two 512-byte zero blocks.
+    head -c 1024 /dev/zero > "$WORK/seed-layer.tar"
+    for key in "${KEYS[@]}"; do
+        dest=$MIRROR_PREFIX/$(mirror_name "${key%:*}")
+        [[ -z ${seen[$dest]+x} ]] || continue
+        seen[$dest]=1
+        seed_package "$dest"
+    done
+}
+
+write_seed_summary() { # FILE
+    local row dest digest size result mode="real run"
+    [[ $DRY_RUN == false ]] || mode="dry run, nothing pushed"
+    {
+        printf '## Base image mirror seed (%s)\n\n' "$mode"
+        printf 'Placeholder tag `%s` in each package under `%s`. Upstream images are not copied.\n\n' \
+            "$SEED_TAG" "$MIRROR_PREFIX"
+        if [[ ${#SEED_ROWS[@]} -eq 0 ]]; then
+            printf 'No pinned images found.\n'
+        else
+            printf '| Package | Seed digest | Size (bytes) | Result |\n'
+            printf '|---|---|---|---|\n'
+            for row in "${SEED_ROWS[@]}"; do
+                IFS='|' read -r dest digest size result <<< "$row"
+                printf '| `%s` | `%s` | %s | %s |\n' "${dest#"${MIRROR_PREFIX%/*}"/}" \
+                    "$(short "${digest#-}")" "$size" "$result"
+            done
+        fi
+    } >> "$1"
 }
 
 write_summary() { # FILE
@@ -593,16 +706,27 @@ run_mirror() {
         scan_into "$label" "$dir"
     done
     group_records
-    log "Mode: $([[ $DRY_RUN == false ]] && echo real run || echo dry run, nothing copied). Mirror: $MIRROR_PREFIX"
+    local mode
+    if ((SEED)); then
+        mode=$([[ $DRY_RUN == false ]] && echo seed, real run || echo seed, dry run, nothing pushed)
+    else
+        mode=$([[ $DRY_RUN == false ]] && echo real run || echo dry run, nothing copied)
+    fi
+    log "Mode: $mode. Mirror: $MIRROR_PREFIX"
     log "Pinned image:tags: ${#KEYS[@]}. Not mirrored (no tag, no digest, malformed): ${#SKIPPED[@]}"
     if [[ $DRY_RUN == false ]] && ! login; then
-        log "FAILED: cannot log in to the mirror, nothing copied."
+        log "FAILED: cannot log in to the mirror, nothing $([[ $SEED -eq 1 ]] && echo pushed || echo copied)."
         return 1
     fi
-    for key in "${KEYS[@]}"; do mirror_key "$key"; done
-
-    log ""
-    write_summary "$WORK/summary"
+    if ((SEED)); then
+        seed_all
+        log ""
+        write_seed_summary "$WORK/summary"
+    else
+        for key in "${KEYS[@]}"; do mirror_key "$key"; done
+        log ""
+        write_summary "$WORK/summary"
+    fi
     cat "$WORK/summary"
     [[ -z ${GITHUB_STEP_SUMMARY:-} ]] || cat "$WORK/summary" >> "$GITHUB_STEP_SUMMARY"
     log ""
@@ -646,6 +770,8 @@ dg() { printf 'sha256:%s' "$(printf '%s' "$1" | sha256sum | cut -d' ' -f1)"; }
 # logged to $WORK/calls; the login's stdin goes to $WORK/login-stdin.
 declare -A FAKE_MANIFEST=() FAKE_TAG=() FAKE_FAIL=() FAKE_N=()
 FAKE_ANON_DENIED=0
+# The manifest a fake append pushes. It lists 233 + 32 more bytes.
+FAKE_SEED='{"schemaVersion":2,"config":{"size":233},"layers":[{"size": 32}],"x":"fake-seed-manifest"}'
 fake_crane() {
     local cmd=$1 ref=${2:-} n answer
     local -a answers=()
@@ -653,6 +779,16 @@ fake_crane() {
     if [[ $cmd == auth ]]; then
         cat > "$WORK/login-stdin"
         return 0
+    fi
+    # append: the reference is the -t value; the layer file's size is logged.
+    local layer="" i
+    if [[ $cmd == append ]]; then
+        local -a args=("$@")
+        for ((i = 1; i + 1 < ${#args[@]}; i++)); do
+            [[ ${args[i]} != -t ]] || ref=${args[i + 1]}
+            [[ ${args[i]} != -f ]] || layer=${args[i + 1]}
+        done
+        printf 'layer bytes %s\n' "$(wc -c < "$layer")" >> "$WORK/calls"
     fi
     n=$((${FAKE_N["$cmd $ref"]:-0} + 1))
     FAKE_N["$cmd $ref"]=$n
@@ -679,6 +815,12 @@ fake_crane() {
             ;;
         tag)
             if [[ -n ${FAKE_MANIFEST[$2]+x} ]]; then FAKE_TAG[${2%@*}:$3]=${2##*@}; return 0; fi
+            ;;
+        append)
+            FAKE_MANIFEST[${ref%:*}@$(dg "$FAKE_SEED")]=$FAKE_SEED
+            FAKE_TAG[$ref]=$(dg "$FAKE_SEED")
+            dg "$FAKE_SEED"
+            return 0
             ;;
     esac
     printf 'Error: GET https://%s: MANIFEST_UNKNOWN: manifest unknown sha256:4290\n' "$ref" >&2
@@ -906,6 +1048,102 @@ tag $M/adobe/s3mock@$S 5.2.3" "$(cat "$WORK/writes")"
         grep -v down || true) > /dev/null
     expect "python complete: no copy or tag for it" 0 "$(calls '^(copy|tag) .*/python[@:]')"
 
+    # Five image:tags in four packages: python twice, postgres twice. The
+    # postgres package already has its seed tag.
+    local PY11=public.ecr.aws/docker/library/python:3.11-slim-trixie E seedrepos=("seed=$R/seed")
+    fake_repo "$R/seed" Dockerfile "FROM $PY@$A AS build" "FROM $PY11@$A2" "FROM $NODE@$N"
+    fake_repo "$R/seed" .github/workflows/ci.yml "        image: $PG@$P" "        image: $PGA@$Q" \
+        "        image: $S3@$S"
+    FAKE_TAG[$PY11]=$A2
+    local EM='{"config":{"size":10},"layers":[{"size":5}]}'
+    E=$(dg "$EM")
+    FAKE_MANIFEST["$M/postgres@$E"]=$EM
+    FAKE_TAG["$M/postgres:seed"]=$E
+
+    log ""
+    log "Seed, dry run (fake crane)"
+    : > "$WORK/calls"
+    rm -f "$WORK/login-stdin"
+    FAKE_N=()
+    status=0
+    (SEED=1 DRY_RUN=true GHCR_TOKEN="" run_mirror "${seedrepos[@]}") > "$WORK/seed-dry" 2>&1 || status=$?
+    sed 's/^/    > /' "$WORK/seed-dry"
+    expect "seed dry run passes" 0 "$status"
+    expect "seed dry run pushes, copies, tags and logs in to nothing" 0 "$(calls '^(append|copy|tag|auth) ')"
+    expect "seed never reads upstream" 0 "$(grep -vcE "^[a-z]+ $M/" "$WORK/calls" || true)"
+    expect "one seed tag read per package" \
+        "$M/python:seed $M/node:seed $M/postgres:seed $M/adobe/s3mock:seed" \
+        "$(grep -E '^digest ' "$WORK/calls" | cut -d' ' -f2 | paste -sd' ')"
+    expect_line "missing seed: would seed" "$WORK/seed-dry" "| \`mirror/python\` | \`-\` | - | dry run, would seed |"
+    expect_line "present seed: skipped, size shown" "$WORK/seed-dry" \
+        "| \`mirror/postgres\` | \`$(short "$E")\` | $((${#EM} + 15)) | already seeded |"
+
+    log ""
+    log "Seed, real run (fake crane)"
+    : > "$WORK/calls"
+    rm -f "$WORK/login-stdin"
+    FAKE_N=()
+    FAKE_FAIL["append $M/node:seed"]="429 ok"
+    status=0
+    (SEED=1 DRY_RUN=false GHCR_TOKEN=$T GITHUB_ACTOR=octo GITHUB_STEP_SUMMARY="$WORK/seed-summary" \
+        run_mirror "${seedrepos[@]}") > "$WORK/seed-real" 2>&1 || status=$?
+    sed 's/^/    > /' "$WORK/seed-real"
+    expect "seed real run passes" 0 "$status"
+    expect "login first, token on stdin only" "auth login ghcr.io -u octo --password-stdin|$T" \
+        "$(head -n 1 "$WORK/calls")|$(cat "$WORK/login-stdin")"
+    expect "the token is never an argument or in the output" "0 0" \
+        "$(grep -c -- "$T" "$WORK/calls" || true) $(grep -c -- "$T" "$WORK/seed-real" || true)"
+    grep -E '^(append|copy|tag) ' "$WORK/calls" | sed "s|$WORK|WORK|" > "$WORK/writes" || true
+    expect "pushes only missing seeds, the 429 retried, never copies or tags" \
+        "append --oci-empty-base -f WORK/seed-layer.tar -t $M/python:seed
+append --oci-empty-base -f WORK/seed-layer.tar -t $M/node:seed
+append --oci-empty-base -f WORK/seed-layer.tar -t $M/node:seed
+append --oci-empty-base -f WORK/seed-layer.tar -t $M/adobe/s3mock:seed" "$(cat "$WORK/writes")"
+    expect "seed never reads upstream" 0 "$(grep -vcE "^([a-z]+ $M/|auth |append |layer bytes )" "$WORK/calls" || true)"
+    expect "the placeholder layer is an empty tar, 1024 bytes" "layer bytes 1024" \
+        "$(grep -m1 '^layer bytes ' "$WORK/calls")"
+    expect_line "pushed seed: digest and size" "$WORK/seed-real" \
+        "| \`mirror/adobe/s3mock\` | \`$(short "$(dg "$FAKE_SEED")")\` | $((${#FAKE_SEED} + 265)) | seeded |"
+    expect_line "present seed left alone" "$WORK/seed-real" \
+        "| \`mirror/postgres\` | \`$(short "$E")\` | $((${#EM} + 15)) | already seeded |"
+    expect_line "package names and sizes in the log" "$WORK/seed-real" \
+        "  seeded at $(dg "$FAKE_SEED") ($((${#FAKE_SEED} + 265)) bytes)"
+    expect_line "seed summary written to the step summary" "$WORK/seed-summary" \
+        "## Base image mirror seed (real run)"
+
+    log ""
+    log "Seed, second real run"
+    # The runs above were subshells; record their pushes here.
+    for key in python node adobe/s3mock; do
+        FAKE_MANIFEST["$M/$key@$(dg "$FAKE_SEED")"]=$FAKE_SEED
+        FAKE_TAG["$M/$key:seed"]=$(dg "$FAKE_SEED")
+    done
+    : > "$WORK/calls"
+    rm -f "$WORK/login-stdin"
+    FAKE_N=()
+    (SEED=1 DRY_RUN=false GHCR_TOKEN=$T run_mirror "${seedrepos[@]}") > "$WORK/seed-again" 2>&1 || true
+    expect "every seed present: nothing pushed" "0 4" \
+        "$(calls '^append ') $(grep -c '| already seeded |' "$WORK/seed-again" || true)"
+
+    log ""
+    log "Real run after seeding leaves the seed tags alone"
+    : > "$WORK/calls"
+    rm -f "$WORK/login-stdin"
+    FAKE_N=()
+    out="${FAKE_TAG[$M/python:seed]} ${FAKE_TAG[$M/postgres:seed]}"
+    FAKE_MANIFEST["$M/postgres@$Q"]=postgres-alpine
+    status=0
+    (DRY_RUN=false GHCR_TOKEN=$T run_mirror "${seedrepos[@]}") > "$WORK/after-seed" 2>&1 || status=$?
+    expect "real run passes and never touches a seed tag" "0 0" "$status $(calls ':seed')"
+    expect "seed tags unchanged" "$out" "${FAKE_TAG[$M/python:seed]} ${FAKE_TAG[$M/postgres:seed]}"
+    expect_line "the real run completes" "$WORK/after-seed" "Done."
+    fake_repo "$R/reserved" Dockerfile "FROM registry.example.com/team/odd:seed@$F"
+    status=0
+    (DRY_RUN=true run_mirror "reserved=$R/reserved") > "$WORK/reserved" 2>&1 || status=$?
+    expect "an upstream tag named seed fails, nothing read for it" "1 0" \
+        "$status $(calls 'team/odd')"
+    expect_line "reserved tag reported" "$WORK/reserved" "failed: tag reserved for the seed"
+
     log ""
     if [[ $TESTS_FAILED -gt 0 ]]; then
         log "self-test FAILED: $TESTS_FAILED check(s)"
@@ -922,8 +1160,12 @@ main() {
         self_test
         return
     fi
+    if [[ ${1:-} == --seed ]]; then
+        SEED=1
+        shift
+    fi
     if [[ $# -eq 0 || ${1:-} == -* ]]; then
-        log "usage: $0 LABEL=DIR... | --self-test"
+        log "usage: $0 [--seed] LABEL=DIR... | --self-test"
         return 2
     fi
     run_mirror "$@"
