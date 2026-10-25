@@ -42,6 +42,14 @@ So after merging a pin change, run the workflow by hand (or wait for Thursday) b
 
 A failed copy (for example a 429 that outlasts the retries) fails the run after all other images were tried. The next run tries again.
 
+## How CI uses it
+
+PromptShield's container job (**Backend container (build + smoke test)**) builds from the mirror. The Dockerfile's FROM lines stay on public.ecr.aws. For each digest-pinned FROM ref the job pulls `ghcr.io/salcyberaware/mirror/<name>:<tag>@<same digest>`, fails unless the pulled image has exactly the pinned digest, and passes `--build-context <FROM ref>=docker-image://<mirror ref>` to `docker build`, so BuildKit uses the mirror copy in place of the FROM ref. The job points public.ecr.aws at 0.0.0.0 first, so a build that tried to reach it would fail.
+
+The FROM lines stay literal on purpose: Dependabot's docker updater and both scripts in `.github/scripts` only read a literal image on a FROM line. An `ARG BASE_IMAGE` default would hide the pin from them.
+
+A Dependabot digest bump can only pass this job once the new digest is in the mirror. The weekly run copies the digest each upstream tag points at, so this is usually already true. If not, run the workflow by hand.
+
 ## Railway is not affected
 
 Railway builds the Dockerfiles, and those keep pulling from public.ecr.aws. Nothing in this mirror changes a deployed image.
