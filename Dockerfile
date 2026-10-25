@@ -14,6 +14,11 @@
 # refuses anonymous pulls from shared builders, which failed both CI and
 # Railway's build. The digest is the same image index Docker Hub serves, so
 # the mirror can only supply that exact image or the build fails.
+#
+# CI builds from a copy of the same digest in ghcr.io/salcyberaware/mirror: the
+# container job passes --build-context to swap each FROM ref for its mirror
+# copy, after checking the digests match. Keep these FROM lines literal (no
+# ARG): Dependabot and .github/scripts/*.sh only read a literal image here.
 
 # ── Build stage ─────────────────────────────────────────────────────────────
 FROM public.ecr.aws/docker/library/python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS build
