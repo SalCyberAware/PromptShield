@@ -3,7 +3,9 @@
 #
 # Finds every image pinned as image:tag@sha256:<digest> in the repo's
 # Dockerfiles (any file named Dockerfile or Dockerfile.*) and in the image:
-# lines of .github/workflows/*.yml. For each pinned image:tag it sends one
+# lines of .github/workflows/*.yml. An image: line that names the GHCR mirror
+# counts as a pin of the upstream image:tag in its "# mirror of" comment (see
+# "Finding pins"). For each pinned image:tag it sends one
 # HEAD request for the tag's manifest and reads the Docker-Content-Digest
 # header, the digest the tag points at now. When that differs from
 # the pin, it opens an issue "Base image update: <image:tag>", or comments on
@@ -67,7 +69,7 @@ RECORDS="$WORK/records"
 
 declare -A STAGES=()
 declare -a KEYS=() ROWS=()
-declare -A KEY_SEEN=() ROW_KIND=() ROW_REF=() ROW_KEY=() ROW_PIN=() ROW_LOCS=()
+declare -A KEY_SEEN=() ROW_KIND=() ROW_REF=() ROW_KEY=() ROW_PIN=() ROW_LOCS=() ROW_WHY=()
 declare -A CURRENT=() LOOKUP_FAILED=()
 # Anonymous pull token per registry host, reused while the registry accepts
 # it. Kept in this variable only and never printed.
@@ -81,16 +83,74 @@ short() { if [[ -n $1 ]]; then printf 'sha256:%s' "${1:7:12}"; else printf -- '-
 
 # ── Finding pins ────────────────────────────────────────────────────────────
 
+# A workflow image: line may name the mirror directly (a service container
+# starts before any step, so it cannot be swapped at build time). Such a line
+# must end in a comment naming the real upstream image:tag:
+#   image: ghcr.io/salcyberaware/mirror/postgres:18@sha256:<digest> # mirror of public.ecr.aws/docker/library/postgres:18
+# The pin is then recorded for the upstream image:tag, with the line's digest.
+MIRROR_REPO=ghcr.io/salcyberaware/mirror
+
 # emit KIND NAME TAG DIGEST LOCATION
 # KIND is pinned, notag, unpinned or malformed. Fields are separated by "|",
-# which the name, tag, digest and location patterns never allow.
+# which the name, tag, digest and location patterns never allow. A malformed
+# mirror line carries the reason in the NAME field.
 emit() {
     local loc=$5
     [[ $loc =~ $LOCATION_RE ]] || loc="(unusual-file-name)"
     printf '%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$loc" >> "$RECORDS"
 }
 
-# classify_ref REF LOCATION
+# mirror_name NAME prints the mirror path for an image name: the path after
+# the registry, without a leading docker/library/, and for Docker Hub without
+# a leading library/.
+mirror_name() {
+    local name=$1 first=${1%%/*} hub=1
+    if [[ $name == */* && ($first == *.* || $first == *:* || $first == localhost) ]]; then
+        [[ $first == docker.io || $first == index.docker.io ]] || hub=0
+        name=${name#*/}
+    fi
+    name=${name#docker/library/}
+    if ((hub)); then name=${name#library/}; fi
+    printf '%s' "$name"
+}
+
+# mirror_line NAME TAG DIGEST LOCATION COMMENT handles a workflow image: line
+# under MIRROR_REPO. COMMENT is the text after the line's "#", if any.
+mirror_line() {
+    local name=$1 tag=$2 digest=$3 loc=$4 comment=$5 up up_name up_tag="" up_digest="" last
+    if [[ ! $comment =~ ^[[:space:]]*mirror\ of[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
+        emit malformed "mirror line without a \"# mirror of\" comment naming the upstream image:tag" "" "" "$loc"
+        return 0
+    fi
+    up=${BASH_REMATCH[1]}
+    if [[ $up == *@* ]]; then
+        up_digest=${up#*@}
+        up=${up%%@*}
+    fi
+    last=${up##*/}
+    if [[ $last == *:* ]]; then
+        up_tag=${last##*:}
+        up_name=${up%:*}
+    else
+        up_name=$up
+    fi
+    if [[ ! $up_name =~ $NAME_RE || $up_name == "$MIRROR_REPO"/* || $last == *:*:* ]] ||
+        [[ ! $up_tag =~ $TAG_RE ]] || [[ -n $up_digest && ! $up_digest =~ $DIGEST_RE ]]; then
+        emit malformed "the \"# mirror of\" comment does not name an upstream image:tag" "" "" "$loc"
+    elif [[ -z $tag || -z $digest ]]; then
+        emit malformed "mirror line needs a tag and a sha256 digest" "" "" "$loc"
+    elif [[ $name != "$MIRROR_REPO/$(mirror_name "$up_name")" || $tag != "$up_tag" ]]; then
+        emit malformed "mirror line name or tag does not match its comment, expected $MIRROR_REPO/$(mirror_name "$up_name"):$up_tag" "" "" "$loc"
+    elif [[ -n $up_digest && $up_digest != "$digest" ]]; then
+        emit malformed "mirror line digest does not match the digest in its comment" "" "" "$loc"
+    else
+        emit pinned "$up_name" "$up_tag" "$digest" "$loc"
+    fi
+}
+
+# classify_ref REF LOCATION [COMMENT]
+# COMMENT is passed for workflow image: lines only, so a Dockerfile line that
+# names the mirror is read as before.
 classify_ref() {
     local ref=$1 loc=$2 name_tag digest="" name tag="" last
     if [[ $ref == *@* ]]; then
@@ -122,7 +182,9 @@ classify_ref() {
         fi
         return 0
     fi
-    if [[ -z $digest ]]; then
+    if [[ -n ${3+x} && $name == "$MIRROR_REPO"/* ]]; then
+        mirror_line "$name" "$tag" "$digest" "$loc" "$3"
+    elif [[ -z $digest ]]; then
         emit unpinned "$name" "$tag" "" "$loc"
     elif [[ -z $tag ]]; then
         emit notag "$name" "" "$digest" "$loc"
@@ -167,16 +229,17 @@ parse_docker_line() {
 
 # parse_workflow_line FILE LINENO LINE
 parse_workflow_line() {
-    local file=$1 n=$2 line=${3%$'\r'} value
+    local file=$1 n=$2 line=${3%$'\r'} raw value comment=""
     [[ $line =~ ^[[:space:]]*(-[[:space:]]+)?image:[[:space:]]*(.*)$ ]] || return 0
-    value=${BASH_REMATCH[2]}
-    value=${value%%[[:space:]]#*}
+    raw=${BASH_REMATCH[2]}
+    value=${raw%%[[:space:]]#*}
+    [[ $value == "$raw" ]] || comment=${raw#"$value"*#}
     value=${value%"${value##*[![:space:]]}"}
     if [[ ${#value} -ge 2 && ( ($value == \"*\" ) || ($value == \'*\') ) ]]; then
         value=${value:1:${#value}-2}
     fi
     [[ -n $value ]] || return 0
-    classify_ref "$value" "$file:$n"
+    classify_ref "$value" "$file:$n" "$comment"
 }
 
 scan_file() { # KIND FILE
@@ -238,7 +301,10 @@ group_records() {
                 key=${name:+$name${tag:+:$tag}}
                 add_row "u|${key:-?}" unpinned "${key:-(unreadable reference)}" "" "" "$loc"
                 ;;
-            malformed) add_row "m|$loc" malformed "(malformed pin)" "" "" "$loc" ;;
+            malformed)
+                add_row "m|$loc" malformed "(malformed pin)" "" "" "$loc"
+                [[ -z $name ]] || ROW_WHY["m|$loc"]=$name
+                ;;
         esac
     done < "$RECORDS"
 }
@@ -494,7 +560,7 @@ row_result() { # ID
             ;;
         notag) printf 'cannot check, no tag' ;;
         unpinned) printf 'not pinned' ;;
-        malformed) printf 'malformed pin' ;;
+        malformed) printf 'malformed pin%s' "${ROW_WHY[$id]:+: ${ROW_WHY[$id]}}" ;;
     esac
 }
 
@@ -695,6 +761,7 @@ check() { # SUMMARY_FILE
 
     for id in "${ROWS[@]}"; do
         [[ ${ROW_KIND[$id]} != malformed ]] || malformed=$((malformed + 1))
+        [[ -z ${ROW_WHY[$id]:-} ]] || log "Malformed mirror line at ${ROW_LOCS[$id]}: ${ROW_WHY[$id]}."
     done
     if [[ $malformed -gt 0 ]]; then
         log "Malformed pins: $malformed. A pin needs a valid image name and tag, and a digest of sha256: and 64 lowercase hex characters."
@@ -842,6 +909,51 @@ pinned|ghcr.io/example/tool|1.2.3|$D|.github/workflows/sample.yml:3
 unpinned||||.github/workflows/sample.yml:4
 malformed||||.github/workflows/sample.yml:5
 pinned|public.ecr.aws/docker/library/python|3.12-slim-trixie|$E|.github/workflows/sample.yml:6" "$out"
+
+    log ""
+    log "Mirror image lines"
+    # Own records file, so the lines above and the compare run below are as before.
+    local M=ghcr.io/salcyberaware/mirror PG=public.ecr.aws/docker/library/postgres:18 all=$RECORDS
+    RECORDS="$WORK/records.mirror"
+    : > "$RECORDS"
+    local -a mirror_lines=(
+        "        image: $M/postgres:18@$A # mirror of $PG"
+        "        image: \"$M/adobe/s3mock:5.2.3@$B\"  #mirror of adobe/s3mock:5.2.3@$B"
+        "        image: $M/postgres:18@$A"
+        "        image: $M/postgres:18@$A # mirror of $PG@$B"
+        "        image: $M/python:18@$A # mirror of $PG"
+        "        image: $M/postgres:17@$A # mirror of $PG"
+        "        image: $M/postgres:18 # mirror of $PG"
+        "        image: $M/postgres:18@$A # mirror of $M/postgres:18"
+        "        image: $M/postgres:18@$A # pinned for CI"
+    )
+    for i in "${!mirror_lines[@]}"; do
+        parse_workflow_line .github/workflows/mirror.yml "$((i + 1))" "${mirror_lines[i]}"
+    done
+    STAGES=()
+    parse_docker_line sample/Dockerfile 1 "FROM $M/postgres:18@$A"
+    out=$(cut -d'|' -f1,2 "$RECORDS")
+    expect "valid mirror line: pin of the upstream image:tag, with the line's digest" \
+        "pinned|public.ecr.aws/docker/library/postgres|18|$A|.github/workflows/mirror.yml:1" "$(sed -n 1p "$RECORDS")"
+    expect "valid mirror line, quoted, upstream digest in the comment matches" \
+        "pinned|adobe/s3mock|5.2.3|$B|.github/workflows/mirror.yml:2" "$(sed -n 2p "$RECORDS")"
+    expect "missing comment: malformed" \
+        'malformed|mirror line without a "# mirror of" comment naming the upstream image:tag' "$(sed -n 3p <<< "$out")"
+    expect "digest mismatch: malformed" \
+        "malformed|mirror line digest does not match the digest in its comment" "$(sed -n 4p <<< "$out")"
+    expect "name mismatch: malformed" \
+        "malformed|mirror line name or tag does not match its comment, expected $M/postgres:18" "$(sed -n 5p <<< "$out")"
+    expect "tag mismatch: malformed" \
+        "malformed|mirror line name or tag does not match its comment, expected $M/postgres:18" "$(sed -n 6p <<< "$out")"
+    expect "mirror line without a digest: malformed" \
+        "malformed|mirror line needs a tag and a sha256 digest" "$(sed -n 7p <<< "$out")"
+    expect "comment naming the mirror itself: malformed" \
+        'malformed|the "# mirror of" comment does not name an upstream image:tag' "$(sed -n 8p <<< "$out")"
+    expect "other comment: malformed" \
+        'malformed|mirror line without a "# mirror of" comment naming the upstream image:tag' "$(sed -n 9p <<< "$out")"
+    expect "a Dockerfile FROM naming the mirror is read as before" \
+        "pinned|$M/postgres|18|$A|sample/Dockerfile:1" "$(sed -n 10p "$RECORDS")"
+    RECORDS=$all
 
     log ""
     log "Registry names"
@@ -998,6 +1110,34 @@ pinned|public.ecr.aws/docker/library/python|3.12-slim-trixie|$E|.github/workflow
     expect "registry text never reaches the output" 0 "$(grep -c 'script' "$WORK/out" || true)"
     expect "no issue for an up-to-date or failed image" 0 \
         "$(grep -cE 'down:1: DRY|liar:2: DRY' "$WORK/out" || true)"
+
+    log ""
+    log "Mirror image line compared with its upstream (fake registry, dry run)"
+    : > "$WORK/requests"
+    FAKE_HTTP[$(manifest_url "$PG")]="200:$B"
+    status=0
+    (
+        RECORDS="$WORK/records.mirror-run"
+        : > "$RECORDS"
+        KEYS=() ROWS=()
+        KEY_SEEN=() ROW_KIND=() ROW_REF=() ROW_KEY=() ROW_PIN=() ROW_LOCS=() ROW_WHY=() CURRENT=() LOOKUP_FAILED=()
+        FAILURES=0
+        parse_workflow_line .github/workflows/ci.yml 9 "        image: $M/postgres:18@$A # mirror of $PG"
+        parse_workflow_line .github/workflows/ci.yml 12 "        image: $M/postgres:18@$A"
+        check ""
+    ) > "$WORK/mirror-out" 2>&1 || status=$?
+    sed 's/^/    > /' "$WORK/mirror-out"
+    expect "a malformed mirror line fails the run" 1 "$status"
+    expect "the upstream tag is looked up, the mirror never" "1 0" \
+        "$(requests "$(manifest_url "$PG")") $(grep -c "$M" "$WORK/requests" || true)"
+    expect_line "mirror pin compared with the upstream digest" "$WORK/mirror-out" \
+        "| \`$PG\` | \`$(short "$A")\` | \`$(short "$B")\` | update available | \`.github/workflows/ci.yml:9\` |"
+    expect_line "malformed mirror line row says why" "$WORK/mirror-out" \
+        "| \`(malformed pin)\` | \`-\` | \`-\` | malformed pin: mirror line without a \"# mirror of\" comment naming the upstream image:tag | \`.github/workflows/ci.yml:12\` |"
+    expect_line "malformed mirror line logged with its location" "$WORK/mirror-out" \
+        "Malformed mirror line at .github/workflows/ci.yml:12: mirror line without a \"# mirror of\" comment naming the upstream image:tag."
+    expect_line "issue for the upstream image:tag names the mirror line" "$WORK/mirror-out" \
+        "$PG: DRY RUN, would open issue \"${TITLE_PREFIX}$PG\" with labels dependencies, docker:"
 
     log ""
     if [[ $TESTS_FAILED -gt 0 ]]; then
