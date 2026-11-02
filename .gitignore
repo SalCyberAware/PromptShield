@@ -69,3 +69,8 @@ scan_demo.html
 scan_results.json
 *.scan.html
 *.scan.json
+
+# dotenv files: ignore every .env variant, keep example templates trackable
+.env
+.env.*
+!.env.example
