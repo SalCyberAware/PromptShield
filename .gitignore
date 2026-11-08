@@ -74,3 +74,7 @@ scan_results.json
 .env
 .env.*
 !.env.example
+
+# Claude Code local settings (may hold saved commands)
+.claude/
+CLAUDE.local.md
