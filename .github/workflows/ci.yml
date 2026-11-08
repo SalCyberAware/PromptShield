@@ -10,7 +10,8 @@ permissions:
 jobs:
   test:
     name: Test on Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moved to 26.04 and Python 3.11.9 is not published for it
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -49,7 +50,7 @@ jobs:
           retention-days: 7
   lint:
     name: Lint with ruff
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +71,7 @@ jobs:
         run: ruff check promptshield/ tests/ --output-format=github
   typecheck:
     name: Type check with mypy (strict)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,7 +106,7 @@ jobs:
   # change -- not on every push. See docs/EVAL_HARNESS.md.
   benchmark:
     name: Verdict benchmark (mocked judges, no API spend)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,7 +128,7 @@ jobs:
         run: python -m pytest tests/test_eval_ci_gate.py -v
   backend:
     name: Backend (clean prod install + tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,7 +165,7 @@ jobs:
   # files. Required by the main ruleset.
   hashed-production-install:
     name: Hashed production install
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,7 +204,7 @@ jobs:
   # scan reaches lazily. No API keys are passed and no model is called.
   container:
     name: Backend container (build + smoke test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -365,7 +366,7 @@ jobs:
 
   frontend:
     name: Frontend (lint + build + tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
