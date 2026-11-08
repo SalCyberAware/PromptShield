@@ -27,7 +27,8 @@ permissions:
 jobs:
   pip-audit:
     name: pip-audit (Python dependencies)
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moved to 26.04 and Python 3.11.9 is not published for it
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,7 +65,7 @@ jobs:
 
   npm-audit:
     name: npm audit (frontend production tree)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -109,7 +110,7 @@ jobs:
 
   gitleaks:
     name: gitleaks (secret scanning, full history)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository with full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,7 +145,7 @@ jobs:
 
   codeql:
     name: CodeQL (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The only job in this repo with a scope beyond the workflow's read-only
     # default.
     permissions:
