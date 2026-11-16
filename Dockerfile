@@ -1,5 +1,6 @@
 # PromptShield API image (the deployed web backend). Railway builds this file
-# from the repo root (railway.json selects it), and anyone can build and run it:
+# from the repo root (it detects the Dockerfile there), and anyone can build
+# and run it:
 #
 #   docker build -t promptshield-api .
 #   docker run -p 8080:8080 --env-file backend/.env promptshield-api
