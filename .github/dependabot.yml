@@ -39,8 +39,9 @@ updates:
   # overlapping packages for different reasons, so a bump that is right for one
   # is not automatically right for the other.
   #
-  # The root requirements.txt is only Railway's pointer at the backend lock, so
-  # it is excluded here: the backend entry below owns that lock.
+  # The root requirements.txt was only Railway's pointer at the backend lock
+  # and has been removed. The exclusion below now matches no file; the backend
+  # entry below owns that lock.
   - package-ecosystem: "pip"
     directory: "/"
     exclude-paths:

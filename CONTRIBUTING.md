@@ -119,7 +119,7 @@ The deployed web service installs exact, hash-checked versions:
 | File | What it is |
 |------|------------|
 | `backend/requirements.in` | The service's runtime ranges, including the engine's own dependencies. Edit this one. |
-| `backend/requirements.txt` | The lock compiled from it: every package pinned with sha256 hashes. Railway installs it through the root `requirements.txt`, then installs the engine with `pip install --no-deps .`. |
+| `backend/requirements.txt` | The lock compiled from it: every package pinned with sha256 hashes. The Dockerfile installs it with `--require-hashes`, then installs the engine with `--no-deps`. |
 | `backend/requirements-dev.in` / `requirements-dev.txt` | Backend test tools, constrained to the lock. |
 
 `pyproject.toml` still holds the ranges the published package promises its

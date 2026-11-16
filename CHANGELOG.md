@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Removed
 
+- **`railway.json` and the root `requirements.txt`.** Railway stops reading config-as-code files on 2026-12-01 and already builds the root `Dockerfile`, which installs `backend/requirements.txt` directly. The restart policy (On Failure, 3 retries) is now set in the Railway dashboard, and the **Hashed production install** and backend CI jobs now install the lock by its own path with `--require-hashes`.
 - **The `pdf` extra and its `weasyprint` dependency.** Nothing imported it and there is no PDF output: `--output` writes `.json` or `.html` only.
 
 ### Fixed
