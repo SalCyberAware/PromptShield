@@ -156,6 +156,7 @@ Not implemented yet: the CLI has no tool-level rate limiting or cap on the numbe
 - Development uses a separate key, also with a spend cap.
 - Both keys have an expiry date and are rotated before they expire.
 - OpenAI and Google API keys are loaded the same way, from environment variables only. Spend caps and scheduled rotation for those keys are planned but not in place yet.
+- How to rotate any of these keys: [docs/KEY_ROTATION.md](docs/KEY_ROTATION.md).
 
 ---
 
