@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Key rotation runbook** (`docs/KEY_ROTATION.md`), linked from `SECURITY.md`: when to rotate, the key inventory, the order of operations in Railway and each provider console, rollback, and the rules for handling keys. `docs/WEB_ARCHITECTURE.md` now describes the Dockerfile install and the dashboard restart policy in place of the removed root `requirements.txt` and `railway.json`.
 - **The backend builds from a Dockerfile** (roadmap P1 #15). The root `Dockerfile` uses the official Python 3.12 slim image pinned by digest, pulled from Amazon's public mirror of Docker Hub's official images (`public.ecr.aws/docker/library`), because Docker Hub refuses anonymous pulls from shared builders. It installs `backend/requirements.txt` with `--require-hashes`, and builds the engine with `--no-deps` as before. The build backend (setuptools, wheel) now comes from its own hashed lock, `backend/build-requirements.txt`, instead of being downloaded unpinned by pip's build isolation. The image runs as an unprivileged user and starts the same uvicorn command, with `PORT` defaulting to 8080. `railway.json` now selects the Dockerfile builder and keeps the restart policy; the start and build commands moved into the image. A new CI job builds the image and checks:
   - it runs as non-root and holds no `.env`, tests or evaluation data;
   - `/api/health` reports the commit, Python 3.12 and `dependencies_locked`;

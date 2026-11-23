@@ -333,7 +333,10 @@ React + Vite, styled to match SOCTriage / ThreatScan.
 ## Deploy (Phase 3)
 
 - **Frontend → Vercel.**
-- **Backend → Railway.**
+- **Backend → Railway.** Railway builds the root `Dockerfile`, which installs
+  `backend/requirements.txt` with `--require-hashes` and then the engine with
+  `--no-deps`. There is no `railway.json` and no root `requirements.txt`; the
+  restart policy is set in the Railway dashboard.
 - Server-side keys as **Railway environment variables**, never shipped to the client.
 - **CORS** locked to the Vercel production domain (and preview domains as needed).
 
@@ -357,8 +360,9 @@ Frontend env: `VITE_API_URL` → the Railway backend URL.
 - **test** — pytest matrix on Python 3.11 / 3.12 / 3.13 (+ Codecov on 3.13). *(3 jobs)*
 - **lint** — `ruff check promptshield/ tests/`.
 - **typecheck** — `mypy promptshield/` (strict).
-- **backend**: clean **production** install (the hashed lock through the root
-  `requirements.txt`, then `pip install --no-deps .` and `pip check`, then
+- **backend**: clean **production** install (the hashed lock by its own path,
+  `pip install --require-hashes -r backend/requirements.txt`, then
+  `pip install --no-deps .` and `pip check`, then
   `backend/requirements-dev.txt`) followed by `pytest backend/tests`. This is the
   gate that proves the web wrapper works against the packaged engine, not an
   editable-parent tree.
